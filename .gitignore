@@ -1,0 +1,33 @@
+# ESP-IDF build output
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+*.bin
+*.elf
+*.map
+
+# Arduino / PlatformIO
+.pio/
+.vscode/
+*.hex
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
+._*
+
+# Editors
+*.swp
+.idea/
+
+# Secrets (WiFi creds, API keys)
+secrets.h
+secrets.py
+.env

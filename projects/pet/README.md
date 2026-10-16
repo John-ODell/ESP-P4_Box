@@ -70,7 +70,9 @@ ignores a retained `pet/cmd` (a stale command must not run at every boot), accep
 images whose project name is `pet`. The version is `git describe` of the checkout (`-dirty` when uncommitted), and
 `pet/ota` is retained, so `mosquitto_sub -t pet/ota -C 1` says what the box runs without the cable. The cable stays
 the way back when both slots are bad: `idf.py flash` writes the table, a blank `otadata` and the app into `ota_0`.
-The table itself must not change again without a USB flash (`notes/flashing.md`, 2026-10-16).
+The table itself must not change again without a USB flash (`notes/flashing.md`, 2026-10-16). First build after
+this change in an existing checkout: delete `projects/pet/sdkconfig` so the new `sdkconfig.defaults` options apply;
+the build stops with a message if you forget.
 
 Console is UART0 at 115200. Layout:
 

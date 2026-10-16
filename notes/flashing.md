@@ -175,3 +175,7 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
   entry is blank, the bootloader falls through to `ota_0`), so no confirm line appears after a cable flash.
 - Recovery: `idf.py -p <port> flash` brings back a working `ota_0`; `idf.py -p <port> erase-otadata` alone makes the
   bootloader boot `ota_0` again without rewriting the app.
+- A checkout that built the old table already has a `projects/pet/sdkconfig`, and IDF reads `sdkconfig.defaults` only
+  when there is none, so the two new options would be missing from it. `main/ota.c` stops the build with a message
+  saying so: delete `projects/pet/sdkconfig` and build again (the build directory can stay). The table itself needs
+  no such step, the CSV is read at every build.

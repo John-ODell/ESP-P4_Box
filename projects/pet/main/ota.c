@@ -17,6 +17,13 @@
 #include "face.h"
 #include "mqtt_link.h"
 #include "ota.h"
+#include "sdkconfig.h"
+
+/* IDF reads sdkconfig.defaults only when there is no sdkconfig yet. A checkout that built before this file existed
+ * would silently come up without rollback and without plain-HTTP OTA; stop the build instead. */
+#if !CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE || !CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP
+#error "projects/pet/sdkconfig predates the OTA options in sdkconfig.defaults: delete it and build again"
+#endif
 
 #define OTA_URL_MAX     200
 #define OTA_TASK_STACK  10240

@@ -49,12 +49,19 @@ class Notifier:
         except (OSError, ValueError) as exc:
             log.warning("pending list in %s not readable (%s); starting empty", self._store, exc)
             return
-        kept = self._pending.restore(raw.get("pending") if isinstance(raw, dict) else None)
+        entries = raw.get("pending") if isinstance(raw, dict) else None
+        if not isinstance(entries, list):
+            log.warning('pending list in %s is not {"pending": [...]}; starting empty', self._store)
+            return
+        kept, given = self._pending.restore(entries, self._now())
+        if kept < given:
+            log.warning("pending list in %s: %d of %d entries not kept (not what the bridge writes)",
+                        self._store, given - kept, given)
         if kept:
             log.info("pending list restored from %s: %d waiting", self._store, kept)
 
     def _save(self) -> None:
-        """Called under the lock, right after a publish, so the file always holds what is on pet/notify."""
+        """Called under the lock, right before the publish, so the file is never behind what is on pet/notify."""
         if self._store is None:
             return
         try:
@@ -102,8 +109,8 @@ class Notifier:
 
     def _publish_pending(self) -> dict:
         summary = self._pending.summary(self._now())
-        self._publish(TOPIC_NOTIFY, json.dumps(summary, separators=(",", ":")), True)
         self._save()
+        self._publish(TOPIC_NOTIFY, json.dumps(summary, separators=(",", ":")), True)
         return summary
 
 

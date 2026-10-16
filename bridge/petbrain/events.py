@@ -121,27 +121,17 @@ class Pending:
         """Every entry as a plain dict, newest first: what goes to bridge/var/pending.json."""
         return [dict(e) for e in self._items]
 
-    def restore(self, entries) -> int:
-        """Replace the list with saved entries that still look like ours; returns how many were kept."""
-        kept: list[dict] = []
-        seen: set[tuple[str, str]] = set()
-        for e in entries if isinstance(entries, list) else []:
-            if not isinstance(e, dict):
+    def restore(self, entries: list, now: datetime) -> tuple[int, int]:
+        """Rebuild the list from saved entries (newest first, as dumped). Each goes through parse_event and apply,
+        the same checks and caps as a posted event, so a hand-edited file cannot put anything on the box that a POST
+        could not. Returns (kept, given)."""
+        self._items = []
+        for e in reversed(entries):
+            try:
+                self.apply(parse_event(e, now))
+            except EventError:
                 continue
-            fields = {k: e.get(k) for k in ("source", "session", "kind", "title", "ts")}
-            if not all(isinstance(v, str) for v in fields.values()):
-                continue
-            if fields["kind"] not in KINDS or fields["kind"] == "cleared":
-                continue
-            if not fields["source"] or not fields["session"]:
-                continue
-            key = (fields["source"], fields["session"])
-            if key in seen:
-                continue
-            seen.add(key)
-            kept.append(fields)
-        self._items = kept[:MAX_PENDING]
-        return len(self._items)
+        return len(self._items), len(entries)
 
     def summary(self, now: datetime) -> dict:
         """The retained pet/notify message: small, newest first, self-describing."""

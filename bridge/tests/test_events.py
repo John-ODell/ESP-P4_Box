@@ -143,6 +143,7 @@ class PersistenceTests(unittest.TestCase):
         saved = json.loads(self.store.read_text())
         self.assertEqual([e["session"] for e in saved["pending"]], ["api", "website"])
         self.assertFalse(self.store.with_suffix(".tmp").exists())
+        self.assertEqual(json.loads(self.store.read_text())["pending"], self.published[-1][1]["pending"])
         self.published.clear()
         second = self.notifier()
         summary = second.publish_pending()
@@ -151,20 +152,27 @@ class PersistenceTests(unittest.TestCase):
         second.ack(b'{"source": "codex", "session": "api"}')
         self.assertEqual([e["session"] for e in json.loads(self.store.read_text())["pending"]], ["website"])
 
-    def test_missing_or_corrupt_file_starts_empty(self):
-        self.assertEqual(self.notifier().pending()["count"], 0)
+    def test_missing_or_corrupt_file_starts_empty_and_odd_entries_are_dropped_with_a_warning(self):
+        with self.assertNoLogs("bridge.notify", level="WARNING"):
+            self.assertEqual(self.notifier().pending()["count"], 0)  # no file: nothing to say
         self.store.parent.mkdir(parents=True)
-        odd_entries = json.dumps({"v": 1, "pending": [
-            {"source": "x"}, 5,
-            {"source": "claude", "session": "ok", "kind": "cleared", "title": "", "ts": "t"},
-            {"source": "claude", "session": "ok", "kind": "done", "title": "", "ts": "t"},
-            {"source": "claude", "session": "ok", "kind": "error", "title": "", "ts": "t2"}]})
+        iso = "2026-10-16T11:00:00+00:00"
+        odd_entries = json.dumps({"v": 1, "pending": [  # newest first, as the bridge writes it
+            {"source": "x"},                                                                  # no session, no kind
+            5,                                                                                # not an object
+            {"source": "claude", "session": "ok", "kind": "done", "title": "", "ts": iso},    # kept
+            {"source": "CLAUDE", "session": "ok", "kind": "error", "title": "", "ts": iso},   # older duplicate
+            {"source": "codex", "session": "a" * 70, "kind": "done", "title": "", "ts": iso}, # kept, session cut
+            {"source": "codex", "session": "gone", "kind": "cleared", "title": "", "ts": iso},  # clears nothing
+            {"source": "codex", "session": "b", "kind": "done", "title": "", "ts": "yesterday"}]})  # bad ts
         for text, expect in (("not json", []), ("[1, 2]", []), ('{"v": 1, "pending": "nope"}', []),
-                             (odd_entries, [("ok", "done")])):
+                             (odd_entries, [("ok", "done"), ("a" * 64, "done")])):
             with self.subTest(text=text[:24]):
                 self.store.write_text(text)
-                kept = self.notifier().pending()["pending"]
+                with self.assertLogs("bridge.notify", level="WARNING") as logs:
+                    kept = self.notifier().pending()["pending"]
                 self.assertEqual([(e["session"], e["kind"]) for e in kept], expect)
+                self.assertEqual(len(logs.output), 1)
 
     def test_without_a_store_nothing_is_written(self):
         Notifier(lambda t, p, r: None, self.now).post({"v": 1, "source": "local", "kind": "done", "session": "x"})

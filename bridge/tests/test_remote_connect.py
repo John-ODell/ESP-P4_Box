@@ -30,7 +30,8 @@ class CheckUrlTests(unittest.TestCase):
 
     def test_only_tailscale_hosts_or_this_machine_may_receive_the_token(self):
         for good in ("http://100.79.52.11:8765/event", "http://[fd7a:115c:a1e0::1]:8765/event",
-                     "http://localhost:8765/event", "https://MAC.tail1234.ts.net/event"):
+                     "http://localhost:8765/event", "https://MAC.tail1234.ts.net/event",
+                     "http://mac.tail1234.ts.net.:8765/event"):
             with self.subTest(good=good):
                 connect.check_url(good)
         for bad in ("http://example.com:8765/event", "https://example.com/event", "http://10.0.0.65:8765/event",
@@ -58,7 +59,7 @@ class RemoteBridgeTests(Home):
 
     def test_a_short_or_odd_token_or_bad_url_writes_nothing(self):
         self.assertEqual(self.run_main("--bridge", URL, "--token", "short", "--yes"), 2)
-        self.assertEqual(self.run_main("--bridge", URL, "--token", 'a"b' + "c" * 40, "--yes"), 2)
+        self.assertEqual(self.run_main("--bridge", URL, "--token", "a b" + "c" * 40, "--yes"), 2)
         self.assertEqual(self.run_main("--bridge", "mac:8765", "--token", TOKEN, "--yes"), 2)
         self.assertFalse(self.config().exists())
 
@@ -84,6 +85,22 @@ class RemoteBridgeTests(Home):
         self.assertEqual(pethook.target({}, str(self.config())), (pethook.DEFAULT_URL, ""))
         self.assertNotIn(TOKEN, self.config().read_text())
         self.assertIn("old token stays in the owner-only backup", "\n".join(self.out))
+
+    def test_a_token_with_quotes_and_backslashes_is_hidden_whole(self):
+        odd = 'Ab"c\\d+/=' + "e" * 30  # base64 and hand-made tokens work on the bridge, so they work here
+        self.assertEqual(self.run_main("--bridge", URL, "--token", odd, "--yes"), 0)
+        self.assertEqual(json.loads(self.config().read_text())["token"], odd)
+        printed = "\n".join(self.out)
+        self.assertNotIn("eeeee", printed)
+        self.assertIn('"token": "<hidden>"', printed)
+
+    def test_answering_no_to_disconnect_says_nothing_about_a_backup(self):
+        self.run_main("--bridge", URL, "--token", TOKEN, "--yes")
+        self.out.clear()
+        connect.main(["--disconnect", "bridge", "--repo", str(self.repo)], home=self.home, out=self.out.append,
+                     ask=lambda _: "n")
+        self.assertNotIn("backup", "\n".join(self.out))
+        self.assertEqual(json.loads(self.config().read_text())["token"], TOKEN)
 
     def test_disconnect_bridge_with_no_file_or_a_broken_one(self):
         self.assertEqual(self.run_main("--disconnect", "bridge", "--yes"), 0)

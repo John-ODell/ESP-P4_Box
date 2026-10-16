@@ -92,8 +92,8 @@ def make_server(host: str, port: int, notifier: Notifier) -> ThreadingHTTPServer
 
         def do_POST(self) -> None:
             if self.headers.get("Origin"):  # browsers send Origin on cross-site POSTs; curl, urllib and hooks do not
-                log.warning("refused browser request from %s (Origin %s)", self.client_address[0],
-                            self.headers.get("Origin"))
+                log.warning("refused browser request from %s (Origin %r)", self.client_address[0],
+                            self.headers.get("Origin"))  # %r: a folded header cannot add a log line
                 self._send(403, {"ok": False, "error": "browser requests are not accepted"})
                 return
             if self.path != "/event":

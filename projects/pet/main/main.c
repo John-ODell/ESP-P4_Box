@@ -26,8 +26,8 @@ static const char *TAG = "pet";
 static int s_taps;
 static bool s_wifi_up, s_mqtt_up;
 static pet_state_t s_state;
-static pet_notify_t s_notify;
-static pet_notice_t s_top_seen; /* the newest entry ever on top of the list: anything later than it is news */  /* the waiting sessions, newest first; touched only with the display lock held */
+static pet_notify_t s_notify;   /* the waiting sessions, newest first; touched only with the display lock held */
+static pet_notice_t s_top_seen; /* the newest entry ever on top of the list, same lock; later than it is news */
 static bool s_swallow_click;   /* LVGL fires CLICKED after a gesture or long press; ignore that one */
 
 static const char *gesture_name(lv_dir_t d)
@@ -39,6 +39,16 @@ static const char *gesture_name(lv_dir_t d)
     case LV_DIR_BOTTOM: return "down";
     default: return "none";
     }
+}
+
+static int notify_index(const pet_notify_t *l, const pet_notice_t *key)
+{
+    for (int i = 0; i < l->n; i++) {
+        if (strcmp(l->items[i].source, key->source) == 0 && strcmp(l->items[i].session, key->session) == 0) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 /* Display lock held: draw the newest waiting session, or nothing. */
@@ -194,15 +204,15 @@ static void on_notify(const char *payload, size_t len, bool retained)
         ESP_LOGW(TAG, "could not take the display lock; notify list not drawn");
         return;
     }
-    /* News is a top entry the box has not had on top before: a later ts than any so far, or another session within
-     * the same second. An older one surfacing after a clear is not news, and neither is a retained message, which is
-     * a replay (boot, reconnect): show it and hold the screen, but do not play the reaction again. */
+    /* News is a top entry the box has not had before: a later ts than any so far, or another session within the same
+     * second that was not in the list already. An older one surfacing after a clear or a tap is not news, and neither
+     * is a retained message, which is a replay (boot, reconnect): show it and hold the screen, no reaction. */
     bool news = false;
     if (nf.n > 0) {
         int c = strcmp(nf.items[0].ts, s_top_seen.ts);
         bool other = strcmp(nf.items[0].source, s_top_seen.source) != 0 ||
                      strcmp(nf.items[0].session, s_top_seen.session) != 0;
-        news = !retained && (c > 0 || (c == 0 && other));
+        news = !retained && (c > 0 || (c == 0 && other && notify_index(&s_notify, &nf.items[0]) < 0));
         if (c >= 0) {
             s_top_seen = nf.items[0];
         }

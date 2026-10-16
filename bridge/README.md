@@ -6,19 +6,50 @@ The pet's brain and its GitHub reader. Runs on the home Mac; the box never holds
 - `petbrain/github_source.py`: read-only GraphQL reader that turns the viewer's `contributionsCollection` into `Day`
   records.
 - `petbrain/cli.py`: fetch + compute + print, for checking the numbers by eye.
+- `petbrain/publish.py`: the bridge loop. Fetch, compute, publish `pet/state` (retained) to Mosquitto.
+- `mosquitto/`: broker config template and setup/run scripts.
 - `tests/`: `python3 -m unittest discover -s tests -t .`
 
-Later milestones add the MQTT publisher, the HTTP endpoint for Claude Code / Codex session events, and launch-at-login.
+Later milestones add the HTTP endpoint for Claude Code / Codex session events (milestone 6) and launch-at-login
+(milestone 7).
+
+## Setup (once)
+
+```bash
+brew install mosquitto
+cd bridge
+python3 -m venv .venv && .venv/bin/pip install paho-mqtt
+cp .env.example .env            # set MQTT_PASS to something random; GITHUB_TOKEN is optional (falls back to `gh auth token`)
+mosquitto/setup.sh              # writes mosquitto/pet.conf and the password file from .env
+```
+
+Put the same `MQTT_USER` / `MQTT_PASS` and the Mac's LAN IP into `projects/pet/main/secrets.h` (see the `.example`).
+The Mac should have a DHCP reservation so the IP in `secrets.h` stays valid.
 
 ## Run it
 
 ```bash
 cd bridge
-cp .env.example .env            # optional: put a GITHUB_TOKEN in it; otherwise `gh auth token` is used
-python3 -m petbrain.cli --days 14
+mosquitto/run.sh                               # the broker, foreground (login item comes in milestone 7)
+.venv/bin/python -m petbrain.publish           # fetch + publish every PET_POLL_MIN minutes
+.venv/bin/python -m petbrain.publish --once    # one cycle
+python3 -m petbrain.cli --days 14              # read-only: print the numbers, no MQTT
 ```
 
-Needs Python 3.11+ (stdlib only so far).
+Poke the box with a made-up state:
+
+```bash
+.venv/bin/python -m petbrain.publish --once --set mood=1 --set streak_at_risk=true --no-save
+.venv/bin/python -m petbrain.publish --once --set 'events=["level_up"]' --set level=9 --no-save
+```
+
+Watch what the box receives:
+
+```bash
+set -a; . ./.env; set +a; mosquitto_sub -h localhost -u "$MQTT_USER" -P "$MQTT_PASS" -t 'pet/#' -v
+```
+
+The brain needs only the standard library (Python 3.11+); the publisher needs `paho-mqtt` (hence the venv).
 
 ## Rules (Flipper dolphin mechanics, GitHub deeds)
 
@@ -38,6 +69,16 @@ Needs Python 3.11+ (stdlib only so far).
   `streak_at_risk` turns on from 18:00 local when today is still empty and a streak is alive.
 - **Goal**: `today.total >= 20` (configurable). **Big day**: 100 or more.
 - **Events** (one-shot, derived against the previously published state): `level_up`, `goal_hit`, `big_day`.
+
+## Topics
+
+| Topic | Who publishes | Retained | Payload |
+|---|---|---|---|
+| `pet/state` | bridge, every poll | yes | the state below |
+| `pet/event` | bridge, from Claude Code / Codex hooks (milestone 6) | no | `{v, ts, source, kind, title, detail}` |
+
+Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
+it renders the numbers but does not re-run the celebrations in `events`.
 
 ## State message (`pet/state`)
 

@@ -64,3 +64,17 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
   (`touch_flags` all zero in the BSP default config). Quirk for later: LVGL fires `LV_EVENT_CLICKED` on release even
   after a `LV_EVENT_GESTURE` or `LV_EVENT_LONG_PRESSED`, so the pet's input code must swallow the tap that follows a
   swipe or long press.
+
+## Update 2026-10-15 20:05: milestone 4 (Wi-Fi + MQTT) on the board
+
+- `projects/pet` with ESP-Hosted + esp-mqtt: boot to "state rendered" takes about 9 s (hosted link up at 3.6 s, IP at
+  8.5 s, MQTT connected and retained state drawn at 8.8 s). Flashed after esptool's RTS reset, no replug.
+- The box got `10.0.0.156` by DHCP; the Mac (broker) is `10.0.0.65`, baked into `projects/pet/main/secrets.h`. Give
+  the Mac a DHCP reservation on the router, or the box loses the broker when the lease changes.
+- Live updates verified: three `pet/state` messages published from the Mac in a row (sad + streak at risk, level-up
+  event, real state) were each received and parsed within a second; the `events` bitmask came through as 0x1 for
+  `level_up`.
+- Mosquitto 2.x refuses non-local connections unless the config has `listener 1883 0.0.0.0`; with
+  `allow_anonymous false` and a password file both the box and the bridge log in as `pet`. The macOS application
+  firewall was off on this Mac, so no prompt appeared; if it is on, allow `mosquitto` when asked.
+- App size with Wi-Fi and MQTT: 0x17c140 bytes, 81% of the 8 MB partition free.

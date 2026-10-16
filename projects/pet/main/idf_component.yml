@@ -8,3 +8,6 @@ dependencies:
   lvgl/lvgl:
     version: "9.3.0"
     public: true
+  # Wi-Fi lives on the ESP32-C6 co-processor; same pinned pair as projects/wifi-check.
+  espressif/esp_hosted: "2.12.11"
+  espressif/esp_wifi_remote: "1.6.3"

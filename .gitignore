@@ -31,3 +31,8 @@ venv/
 secrets.h
 secrets.py
 .env
+
+# Bridge runtime files
+bridge/var/
+bridge/mosquitto/pet.conf
+bridge/mosquitto/passwd

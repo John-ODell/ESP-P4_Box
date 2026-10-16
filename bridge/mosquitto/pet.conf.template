@@ -1,0 +1,11 @@
+# Mosquitto config for the pet bridge. setup.sh fills in __REPO__ and writes pet.conf (gitignored).
+# LAN listener with a password file; the box and the bridge both log in as user "pet".
+listener 1883 0.0.0.0
+allow_anonymous false
+password_file __REPO__/bridge/mosquitto/passwd
+persistence true
+persistence_location __REPO__/bridge/var/
+log_dest stderr
+log_type error
+log_type warning
+log_type notice

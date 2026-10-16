@@ -1,5 +1,6 @@
-/* Milestone 2: BSP up, one static face, touch events logged. */
+/* Milestone 4: BSP face + Wi-Fi via the C6 + MQTT subscription to the bridge's pet/state. */
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -9,9 +10,14 @@
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include "face.h"
+#include "net.h"
+#include "mqtt_link.h"
+#include "pet_state.h"
 
 static const char *TAG = "pet";
 static int s_taps;
+static bool s_wifi_up, s_mqtt_up;
+static pet_state_t s_state;
 
 static const char *gesture_name(lv_dir_t d)
 {
@@ -24,6 +30,7 @@ static const char *gesture_name(lv_dir_t d)
     }
 }
 
+/* Called from the LVGL task; the lock is already held. */
 static void touch_event_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
@@ -45,6 +52,7 @@ static void touch_event_cb(lv_event_t *e)
         ESP_LOGI(TAG, "tap #%d      x=%d y=%d", s_taps, (int)p.x, (int)p.y);
         snprintf(buf, sizeof(buf), "tap %d at %d,%d", s_taps, (int)p.x, (int)p.y);
         face_set_status(buf);
+        face_ack();
         break;
     case LV_EVENT_LONG_PRESSED:
         ESP_LOGI(TAG, "long press  x=%d y=%d", (int)p.x, (int)p.y);
@@ -59,6 +67,52 @@ static void touch_event_cb(lv_event_t *e)
     }
     default:
         break;
+    }
+}
+
+static void refresh_link_line(void)
+{
+    const char *txt = !s_wifi_up ? "wifi: connecting" : (s_mqtt_up ? "wifi + mqtt ok" : "wifi ok, mqtt: connecting");
+    if (bsp_display_lock(200)) {
+        face_set_link(txt);
+        bsp_display_unlock();
+    }
+}
+
+static void on_net(net_status_t st, const char *detail)
+{
+    s_wifi_up = (st == NET_STATUS_GOT_IP);
+    refresh_link_line();
+}
+
+static void on_mqtt_status(bool connected)
+{
+    s_mqtt_up = connected;
+    refresh_link_line();
+}
+
+static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool retained)
+{
+    if (strcmp(topic, PET_TOPIC_STATE) == 0) {
+        pet_state_t st;
+        if (!pet_state_parse(payload, len, &st)) {
+            return;
+        }
+        s_state = st;
+        ESP_LOGI(TAG, "state: lv%d xp%d (%d/%d) mood %d %s streak %d%s today %d/%d%s%s events=0x%lx%s",
+                 st.level, st.xp, st.xp_into, st.xp_next, st.mood, st.mood_label, st.streak,
+                 st.streak_at_risk ? " AT RISK" : "", st.today.total, st.goal, st.goal_hit ? " goal" : "",
+                 st.big_day ? " BIG" : "", (unsigned long)st.events, retained ? " (retained)" : "");
+        if (bsp_display_lock(500)) {
+            /* A retained message is a replay of old state: render it, but do not re-celebrate. */
+            face_apply_state(&st, !retained);
+            bsp_display_unlock();
+        } else {
+            ESP_LOGW(TAG, "could not take the display lock; state not drawn");
+        }
+    } else if (strcmp(topic, PET_TOPIC_EVENT) == 0) {
+        /* Session notifications arrive here in milestone 6. */
+        ESP_LOGI(TAG, "event: %.*s", (int)len, payload);
     }
 }
 
@@ -85,10 +139,18 @@ void app_main(void)
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr, touch_event_cb, LV_EVENT_ALL, NULL);
     bsp_display_unlock();
+    ESP_LOGI(TAG, "face ready");
 
-    ESP_LOGI(TAG, "hello-face ready; tap the screen");
+    ESP_ERROR_CHECK(net_start(on_net));
+    if (!net_wait_ip(30000)) {
+        ESP_LOGW(TAG, "no IP after 30 s; starting MQTT anyway, it will retry");
+    }
+    ESP_ERROR_CHECK(mqtt_link_start(on_mqtt_msg, on_mqtt_status));
+
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(30000));
-        ESP_LOGI(TAG, "alive, taps so far: %d, free heap %u", s_taps, (unsigned)esp_get_free_heap_size());
+        vTaskDelay(pdMS_TO_TICKS(60000));
+        ESP_LOGI(TAG, "alive: wifi %s, mqtt %s, state %s, taps %d, free heap %u", s_wifi_up ? "up" : "down",
+                 s_mqtt_up ? "up" : "down", s_state.valid ? s_state.ts : "none", s_taps,
+                 (unsigned)esp_get_free_heap_size());
     }
 }

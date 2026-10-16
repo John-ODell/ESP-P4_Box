@@ -19,8 +19,9 @@ nothing. `--status` prints the table only; `--connect claude codex --yes` and `-
 - Claude Code: the three hook groups of `claude-settings.json` are merged into `~/.claude/settings.json`. Other keys
   and other hooks are kept; disconnecting removes only the hook entries that run `claude_hook.py`.
 - Codex: the `notify` route (`codex_notify.py`), because lifecycle hooks need the Codex CLI's `/hooks` trust step and
-  are unverified (#13). The `notify` command already in `~/.codex/config.toml` is chained after `--then`, and disconnect
-  puts back the same list, written as `notify = ["...", "..."]` (byte for byte when it was written that way). Only a one-line `notify = [...]` is edited; anything else is refused.
+  are unverified (#13). The `notify` command already in `~/.codex/config.toml` is chained after `--then`, and
+  disconnect puts back the same list, written as `notify = ["...", "..."]` (byte for byte when it was written that
+  way). Only a one-line `notify = [...]` is edited; anything else is refused.
 - Goose and Aider are #31. Ollama is a model server, so its sessions reach the pet through the tool that drives it;
   direct use is #32.
 - Changes apply to sessions started afterwards. A running Claude Code session picks up new hooks after a look in

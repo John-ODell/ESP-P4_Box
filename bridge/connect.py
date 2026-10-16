@@ -105,8 +105,11 @@ class ClaudeCode(Tool):
     def _ours(self, hook) -> bool:
         return isinstance(hook, dict) and self.MARK in str(hook.get("command", ""))
 
+    def _snippet(self) -> dict:
+        return json.loads((self.repo / "bridge" / "hooks" / "claude-settings.json").read_text(encoding="utf-8"))
+
     def _wanted(self) -> dict:
-        snippet = json.loads((self.repo / "bridge" / "hooks" / "claude-settings.json").read_text(encoding="utf-8"))
+        snippet = self._snippet()
         command = f"python3 {script_ref(self.repo, self.home, 'claude_hook.py')} 2>/dev/null || true"
         for groups in snippet["hooks"].values():
             for group in groups:
@@ -121,7 +124,7 @@ class ClaudeCode(Tool):
 
     def connected_in(self, text: str) -> bool:
         hooks = self._load(text).get("hooks", {})
-        return all(self._has(hooks.get(event), event) for event in self._wanted())
+        return all(self._has(hooks.get(event), event) for event in self._snippet()["hooks"])
 
     def connect_text(self, text: str) -> str:
         data = self._load(text)
@@ -269,7 +272,11 @@ def change(tool: Tool, connect: bool, yes: bool, out=print, ask=input) -> bool:
         out(f"{tool.label}: already {verb}, nothing to change.")
         return True
     out("".join(difflib.unified_diff(old.splitlines(True), new.splitlines(True), str(path), f"{path} (new)")))
-    if not yes and ask(f"Write this to {path}? [y/N] ").strip().lower() not in ("y", "yes"):
+    try:
+        answer = "y" if yes else ask(f"Write this to {path}? [y/N] ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() not in ("y", "yes"):
         out(f"{tool.label}: left alone.")
         return False
     tmp = path.with_name(path.name + ".pet-tmp")
@@ -334,11 +341,11 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
     except EOFError:
         return 0
     every = picks == ["all"]
-    bad = [p for p in picks if not every and not (p.isdigit() and 0 < int(p) <= len(items))]
+    bad = [p for p in picks if not every and not (p.isascii() and p.isdecimal() and 0 < int(p) <= len(items))]
     if bad:
         out(f"Not a choice: {' '.join(bad)}. Use the numbers 1 to {len(items)}, or 'all'.")
         return 2
-    chosen = items if every else [items[int(p) - 1] for p in dict.fromkeys(picks)]
+    chosen = items if every else [items[n - 1] for n in dict.fromkeys(int(p) for p in picks)]
     results = []
     for tool in chosen:
         if not tool.found():

@@ -200,6 +200,20 @@ class ChangeTests(Home):
         tool = self.tool(connect.ClaudeCode)
         self.assertFalse(tool.connected_in('{"hooks": {"Stop": [{"hooks": 3}]}}'))
 
+    def test_repeated_or_odd_picks_and_end_of_input_at_the_write_prompt(self):
+        self.write(".claude/settings.json", "{}\n")
+        answers = iter(["01 1"])
+
+        def ask(prompt):
+            if prompt.startswith("Write this"):
+                raise EOFError
+            return next(answers)
+        self.assertEqual(connect.main(["--repo", str(self.repo)], home=self.home, out=self.out.append, ask=ask), 1)
+        self.assertEqual(sum("left alone" in line for line in self.out), 1)  # one tool, asked once
+        self.assertEqual((self.home / ".claude" / "settings.json").read_text(), "{}\n")
+        code = connect.main(["--repo", str(self.repo)], home=self.home, out=self.out.append, ask=lambda _: "\u00b2")
+        self.assertEqual(code, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -67,7 +67,8 @@ The bridge log shows `event claude cleared '<folder>'` for the prompt, then `eve
 finished turn, and `/pending` lists the `done` entry. For Codex without a CLI, feed a payload by hand:
 
 ```bash
-echo '{"hook_event_name":"PermissionRequest","cwd":"/tmp/demo","tool_name":"shell","tool_input":{"description":"Push the branch"}}' | python3 bridge/hooks/codex_hook.py
+echo '{"hook_event_name":"PermissionRequest","cwd":"/tmp/demo","tool_name":"shell","tool_input":{"description":"Push the branch"}}' \
+  | python3 bridge/hooks/codex_hook.py
 python3 bridge/hooks/codex_notify.py '{"type":"agent-turn-complete","last-assistant-message":"Rename complete.","cwd":"/tmp/demo"}'
 ```
 

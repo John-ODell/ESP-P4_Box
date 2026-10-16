@@ -137,7 +137,9 @@ class ClaudeHookTests(unittest.TestCase):
             os.environ.pop("CLAUDE_PROJECT_DIR", None)
             self.assertEqual(claude_hook.session_name({}), "claude")
         finally:
-            if env is not None:
+            if env is None:
+                os.environ.pop("CLAUDE_PROJECT_DIR", None)
+            else:
                 os.environ["CLAUDE_PROJECT_DIR"] = env
 
     def test_title_is_cut_to_eighty_characters(self):

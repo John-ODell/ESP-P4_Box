@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -79,10 +80,10 @@ class ClaudeHookTests(unittest.TestCase):
         self.assertEqual((e["kind"], e["session"], e["title"]), ("done", "box", "All tests pass."))
         self.assertEqual(claude_hook.build_event({"hook_event_name": "Stop", "cwd": "/w"})["title"], "finished")
 
-    def test_prompt_and_session_end_clear(self):
-        for name in ("UserPromptSubmit", "SessionEnd"):
-            e = claude_hook.build_event({"hook_event_name": name, "cwd": "/w/box", "prompt": "yes"})
-            self.assertEqual((e["kind"], e["session"]), ("cleared", "box"))
+    def test_prompt_clears_and_session_end_sends_nothing(self):
+        e = claude_hook.build_event({"hook_event_name": "UserPromptSubmit", "cwd": "/w/box", "prompt": "yes"})
+        self.assertEqual((e["kind"], e["session"]), ("cleared", "box"))
+        self.assertIsNone(claude_hook.build_event({"hook_event_name": "SessionEnd", "cwd": "/w/box", "reason": "other"}))
 
     def test_other_events_send_nothing(self):
         self.assertIsNone(claude_hook.build_event({"hook_event_name": "PreToolUse", "cwd": "/w"}))
@@ -120,7 +121,7 @@ class CodexHookTests(unittest.TestCase):
                                                  "last_assistant_message": "Done."})["title"], "Done.")
         self.assertEqual(codex_hook.build_event({"hook_event_name": "UserPromptSubmit", "cwd": "/w"})["kind"],
                          "cleared")
-        self.assertEqual(codex_hook.build_event({"hook_event_name": "SessionEnd", "cwd": "/w"})["kind"], "cleared")
+        self.assertIsNone(codex_hook.build_event({"hook_event_name": "SessionEnd", "cwd": "/w", "reason": "other"}))
         self.assertIsNone(codex_hook.build_event({"hook_event_name": "PreToolUse", "cwd": "/w"}))
         self.assertEqual(codex_hook.build_event({"hook_event_name": "Stop"})["session"], "codex")
 
@@ -152,10 +153,27 @@ class CodexNotifyTests(unittest.TestCase):
                 run = subprocess.run([PY, str(HOOKS / "codex_notify.py"), "--then", *chain, payload],
                                      env=env, capture_output=True, text=True, timeout=20)
                 self.assertEqual((run.returncode, run.stdout), (0, ""))
-                self.assertEqual(json.loads(out.read_text()), ["turn-ended" if False else payload] if False else [payload])
+                self.assertEqual(json.loads(out.read_text()), [payload])
             self.assertEqual([(b["kind"], b["session"]) for b in stub.bodies], [("done", "api")])
         finally:
             stub.close()
+
+
+class SnippetTests(unittest.TestCase):
+    def test_snippets_parse_and_name_only_the_handled_events(self):
+        claude = json.loads((HOOKS / "claude-settings.json").read_text())["hooks"]
+        self.assertEqual(set(claude), {"Notification", "Stop", "UserPromptSubmit"})
+        self.assertEqual(set(claude["Notification"][0]["matcher"].split("|")), claude_hook.NEEDS_INPUT_TYPES)
+        codex = json.loads((HOOKS / "codex-hooks.json").read_text())["hooks"]
+        self.assertEqual(set(codex), {"PermissionRequest", "Stop", "UserPromptSubmit"})
+        for script, table in (("claude_hook.py", claude), ("codex_hook.py", codex)):
+            for entries in table.values():
+                for hook in entries[0]["hooks"]:
+                    self.assertEqual(hook["type"], "command")
+                    self.assertIn(script, hook["command"])
+                    self.assertLessEqual(hook["timeout"], 5)
+        notify = tomllib.loads((HOOKS / "codex-config.snippet.toml").read_text())["notify"]
+        self.assertEqual((notify[0], notify[1].rsplit("/", 1)[-1], notify[2]), ("python3", "codex_notify.py", "--then"))
 
 
 class PostAndScriptTests(unittest.TestCase):

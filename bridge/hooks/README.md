@@ -36,8 +36,8 @@ itself: the snippets are pasted by hand into the tool's own settings, after a lo
 
 **Claude Code.** Merge the `hooks` block from `claude-settings.json` into `~/.claude/settings.json` (every
 project) or a project's `.claude/settings.json` (that project only). The command runs through `sh`, so `$HOME`
-expands; change the path if the repo is somewhere else. Claude Code shows nothing when a hook runs; the hook's
-`timeout` is 5 s and the script gives up after 1 s on its own.
+expands; change the path if the repo is somewhere else. The hook's `timeout` is 5 s and the script gives up after
+1 s on its own.
 
 **Codex.** Copy `codex-hooks.json` to `~/.codex/hooks.json` (every project) or `<repo>/.codex/hooks.json` (one
 project), then run `/hooks` in the Codex CLI to review and trust it: Codex skips a command hook until its exact

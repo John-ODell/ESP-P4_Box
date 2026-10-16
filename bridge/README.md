@@ -80,7 +80,9 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/ack` | box, when a tap acknowledges a session (milestone 6) | no | `{source, session}` or `{all: true}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
-it renders the numbers but does not re-run the celebrations in `events`.
+it renders the numbers but does not re-run the celebrations in `events`. Updates over the LAN (#16) add two more
+topics, `pet/cmd` (Mac to box, never retained) and `pet/ota` (box to Mac, retained): `projects/pet/README.md`,
+"Updating over Wi-Fi".
 
 ## State message (`pet/state`)
 

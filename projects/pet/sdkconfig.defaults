@@ -52,3 +52,7 @@ CONFIG_ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD=y
 # alignment and the P4 SDMMC driver rejects the misaligned half with ESP_ERR_INVALID_ARG (258), which
 # ESP-Hosted treats as fatal and reboots the host (esp-hosted-mcu issue 252, fixed upstream in 2.13.0).
 CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=n
+
+# --- Updates over the LAN (#16): a new image is kept only after MQTT connects; plain HTTP from the Mac ---
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y

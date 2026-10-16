@@ -156,3 +156,37 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
   21:22:58 to 21:49:52 and two boots around 21:49:35 and 21:49:53 (John pressed reset at least once).
 - Odd one: a 90 s capture at 21:52 contained one garbled burst where an alive line should have been, while captures a
   minute later were clean at the same 115200 baud. Not understood; watch for it.
+
+## 2026-10-16 afternoon: backlight off step and touch wake confirmed on the UART (#3)
+
+Firmware: the #1 idle-timer build (main at ae89721), box on the CH343P UART port, `tools/serial_tail.py` only, so
+nothing reset the board except the cable plug-in, which the alive lines report as `reset power-on`.
+
+- **Off after ten idle minutes, after a power-on.** Capture started about 4:20 pm CDT, right after the plug-in:
+
+  ```
+  I (32100) sched: backlight 60% -> 45% (idle 30 s, dim)
+  I (602499) sched: backlight 45% -> 0% (idle 600 s, off)
+  ```
+
+  No touch in between (`taps 0` in every alive line), Wi-Fi and MQTT up throughout. A bridge `pet/state` at
+  4:25 pm did not wake the screen, because nothing the pet shows had changed.
+- **A touch from off brings it back.** Same later capture, about 5:16 pm CDT, tap #6 at 2782913 ms being the last touch:
+
+  ```
+  I (3383162) sched: backlight 45% -> 0% (idle 600 s, off)
+  I (3453862) sched: backlight 0% -> 60% (active)
+  I (3453862) pet: touch down  x=419 y=500
+  I (3453952) pet: tap #7      x=419 y=500
+  ```
+
+  The wake fires on finger-down, as designed.
+- **Why it took three tries: the bridge poll and the off timer line up.** The bridge polls GitHub every 10 minutes and
+  the off timer is 10 minutes. On a day with ongoing GitHub activity, each poll changes the state, which wakes the box
+  and restarts the timer, so the next off lands within a second or so of the next poll and the screen is dark only
+  for that moment. Seen at 4:45 pm (`0%` at 1533354 ms, woken by `pet/state` at 1534406 ms). Taps break the rhythm;
+  otherwise a busy day keeps the box lit. Tracked as its own issue.
+- **The native USB-C port carries no log on this firmware.** With the cable in the other port the box enumerates as
+  Espressif `ESP32_P4` (VID 0x303a) at `/dev/cu.usbmodem214301`, but 100 s of listening there produced nothing,
+  although `CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y`. Use the UART port (`/dev/cu.usbmodem5B610404781`,
+  "USB Single Serial") for logs and flashing.

@@ -26,7 +26,7 @@ Keeping the brain on the Mac means rules can change without reflashing, and a ph
 | 3. Pet brain with tests, read-only GitHub reader | Done. |
 | 4. MQTT from Mac to box, real state on screen | Done and verified on the board. |
 | 5. Pixel-art character, idle animations, reactions, stats swipe | Done on the board: original character, weighted idle animations per mood, celebrate / notice / sleep reactions, clock, backlight schedule, stats swipe. Also fixed a reboot every 288 s inherited from milestone 4 (see Board notes). Visual sign-off pending. |
-| 6. Claude Code and Codex session notifications | Planned. |
+| 6. AI session notifications (Claude Code, Codex, local tools) | In progress: the bridge's event endpoint is in (issue #4); the hooks and the box's bubble follow (#5 to #8). |
 | 7. Bridge launches at login, setup docs | Planned. |
 
 What the screen shows today: level and XP bar, streak, today's contributions against the daily goal, a "BIG DAY" badge at 100 or more, mood, and connection status. A level-up shows a banner that a tap dismisses.
@@ -52,7 +52,7 @@ The full rules, message format, and known limits are in [bridge/README.md](bridg
 ```
 projects/pet/        box firmware: ESP-IDF 5.5.5, LVGL 9, Waveshare BSP, Wi-Fi, MQTT
 projects/wifi-check/ standalone Wi-Fi scan and join test for the C6
-bridge/              Mac-side brain, GitHub reader, MQTT publisher, Mosquitto setup, tests
+bridge/              Mac-side brain, GitHub reader, MQTT publisher, session-event endpoint, Mosquitto setup, tests
 tools/serial_tail.py passive serial reader that never resets the board
 notes/               flashing notes, C6 findings, original project brief
 vendor/waveshare-4b/ Waveshare's official repo as a submodule (examples, BSP, schematics)

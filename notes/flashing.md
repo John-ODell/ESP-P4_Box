@@ -157,6 +157,34 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
 - Odd one: a 90 s capture at 21:52 contained one garbled burst where an alive line should have been, while captures a
   minute later were clean at the same 115200 baud. Not understood; watch for it.
 
+## 2026-10-16: OTA partition table for projects/pet (issue #16; built, not yet flashed)
+
+- `projects/pet/partitions.csv` changes from one 8 MB `factory` app to `otadata` + `ota_0` + `ota_1` (4 MB each), with
+  nvs, phy_init and the 7 MB SPIFFS `storage` as before. The first build with this table has to go in over USB with
+  the usual `idf.py -C projects/pet -p /dev/cu.usbmodem5B610404781 -b 921600 flash`, which writes the bootloader,
+  the new table, a blank `otadata` and the app into `ota_0`. After that `tools/ota_push.py` updates the box over the
+  LAN (`projects/pet/README.md`, "Updating over Wi-Fi").
+- The table and the bootloader change only over USB. An image pushed over the air goes into whichever slot the table
+  on the box names and locates itself at run time (`esp_ota_get_running_partition`), so one `pet.bin` serves both
+  slots; an image bigger than the 4 MB slot fails the write (`ESP_ERR_INVALID_SIZE`), and one that cannot boot is
+  rolled back. An edit to `partitions.csv` therefore does nothing on the box until the next cable flash, and until
+  then the checkout's picture of the box is wrong, so leave the file alone unless a cable flash is planned.
+- `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` is on. Lines the code prints: at boot `ota: running pet <version> (built
+  ...) from ota_0 at 0x20000`, with `first boot of this image: rolled back at the next reset unless MQTT connects`
+  appended after an update; `ota: image <version> confirmed: it stays` once MQTT is up; during an update
+  `ota: fetching http://...`, `ota: image <version> built ..., N bytes, writing ota_1`, a percentage line every 10 %,
+  then `ota: written and verified; rebooting into <version>`. After a rollback the next boot says `ota: image
+  <version> in ota_1 was rolled back: it never confirmed` (the bootloader's own line about it is at debug level) and
+  the retained `pet/ota` carries `rolled_back`. A cable-flashed image boots with a blank `otadata`: on that first
+  boot the bootloader writes `ota_seq=1, VALID` for `ota_0` (`Set actual ota_seq=1 in otadata[0]` on the UART), so
+  it is never on trial and no confirm line appears after a cable flash.
+- Recovery: `idf.py -p <port> flash` brings back a working `ota_0`; `idf.py -p <port> erase-otadata` alone makes the
+  bootloader boot `ota_0` again without rewriting the app.
+- A checkout that built the old table already has a `projects/pet/sdkconfig`, and IDF reads `sdkconfig.defaults` only
+  when there is none, so the two new options would be missing from it. `main/ota.c` stops the build with a message
+  saying so: delete `projects/pet/sdkconfig` and build again (the build directory can stay). The table itself needs
+  no such step, the CSV is read at every build.
+
 ## 2026-10-16 afternoon: backlight off step and touch wake confirmed on the UART (#3)
 
 Firmware: the #1 idle-timer build (main at ae89721; no log line carries a build ID), box on the CH343P UART port,

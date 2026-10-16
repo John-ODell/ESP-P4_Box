@@ -50,6 +50,37 @@ idf.py -C projects/pet -p /dev/cu.usbmodem5B610404781 -b 921600 flash
 python tools/serial_tail.py -t 60                 # passive UART reader, no DTR/RTS toggling
 ```
 
+**Updating over Wi-Fi** (issue #16). The partition table has two app slots, so once it is on the box (one USB flash
+with the commands above, because an app cannot rewrite the table it runs from) later builds go over the LAN:
+
+```bash
+idf.py -C projects/pet build
+bridge/.venv/bin/python tools/ota_push.py         # serves build/pet.bin from this Mac and tells the box on pet/cmd
+```
+
+The tool serves the image over plain HTTP from the Mac's LAN address (port 8070; `--ip` and `--port` override it, and
+the first time macOS may ask whether Python may accept incoming connections, which it must), publishes
+`{"ota": "http://<mac>:8070/pet.bin"}` on `pet/cmd`, not retained, and prints the box's reports on `pet/ota`:
+`downloading` with a percentage every 10 %, `rebooting`, then `running` with the new version and `confirmed` once
+MQTT is back, or `failed` with the reason. The box writes the other slot while the face keeps running, checks the
+image's own SHA-256, reboots into it, and `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` keeps the new image on trial until
+MQTT connects (`ota: image <version> confirmed: it stays` on the UART). A build that resets before that, say one
+with wrong Wi-Fi credentials, is rolled back by the bootloader at that reset and the old image runs again. The box
+ignores a retained `pet/cmd` (a stale command must not run at every boot), accepts only `http://` URLs, and only
+images whose project name is `pet`. The version is `git describe` of the checkout (`-dirty` when uncommitted), and
+`pet/ota` is retained, so `mosquitto_sub -u <MQTT_USER> -P <MQTT_PASS> -t pet/ota -C 1` (the values from
+`bridge/.env`; the broker takes no anonymous clients) shows the box's last report without the cable: `running` with
+the version and slot after a connect, or `downloading`, `rebooting` or `failed` while an update is in flight or went
+wrong; after a rollback the `running` report also carries `rolled_back` with the version that never confirmed, and
+the UART says `ota: image <version> in ota_1 was rolled back: it never confirmed`. An image pushed over the air lands
+in whichever slot the table on the box names and finds its own slot at run time, so one `pet.bin` serves both slots;
+it has to fit the box's 4 MB slot (a bigger one fails the write) and one that cannot boot is rolled back. The table
+and the bootloader themselves change only over USB: an edit to `partitions.csv` does nothing on the box until the
+next cable flash, so leave it alone unless you plan one. The cable stays the way back when both slots are bad:
+`idf.py flash` writes the table, a blank `otadata` and the app into `ota_0`. First build after this change in an
+existing checkout: delete `projects/pet/sdkconfig` so the new `sdkconfig.defaults` options apply; the build stops
+with a message if you forget (`notes/flashing.md`, 2026-10-16).
+
 Console is UART0 at 115200. Layout:
 
 - `main/main.c`: boot, BSP start, touch handling, wiring between network, MQTT, schedule, and the face.
@@ -62,10 +93,14 @@ Console is UART0 at 115200. Layout:
   night variants, hold while something waits for a tap). Tunables in `main/pet_config.h` (timezone is a POSIX TZ
   string there).
 - `main/net.c`: Wi-Fi station via `esp_wifi_remote` / ESP-Hosted with backoff reconnect.
-- `main/mqtt_link.c`: esp-mqtt client, subscribes to `pet/state`, `pet/event` and `pet/notify`, publishes `pet/ack`.
+- `main/mqtt_link.c`: esp-mqtt client, subscribes to `pet/state`, `pet/event`, `pet/notify` and `pet/cmd`, publishes
+  `pet/ack` and `pet/ota`.
 - `main/pet_state.c`: parses the state JSON (schema v1, see `bridge/README.md`).
 - `main/pet_notify.c`: parses the `pet/notify` list and builds the `pet/ack` message.
-- `partitions.csv`: nvs, phy_init, 8 MB factory app, 7 MB SPIFFS `storage`.
+- `main/ota.c`: updates over Wi-Fi: the `pet/cmd` command, the download into the other slot, the trial-and-confirm
+  step, the `pet/ota` reports.
+- `partitions.csv`: nvs, otadata, phy_init, two 4 MB app slots `ota_0` and `ota_1`, 7 MB SPIFFS `storage`. Leave it
+  alone: the table only changes over USB, and until that flash the checkout's picture of the box is wrong.
 
 **Gotcha: reboots every ~5 minutes.** If the UART shows `H_SDIO_DRV: sdio_write_task: ... Failed to send data: 258`
 followed by `Restarting host`, the ESP-Hosted memory pools are back in PSRAM. Keep

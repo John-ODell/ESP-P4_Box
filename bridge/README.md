@@ -166,7 +166,7 @@ The bridge then also listens on this Mac's own Tailscale address, which it finds
   and a log line.
 - Tailscale encrypts the traffic, but only while Tailscale is on at both ends. Use the Mac's MagicDNS name
   (`johns-macbook-pro.<tailnet>.ts.net`), not its 100.x address: with Tailscale off on the sending machine that name
-  does not resolve, so nothing is sent, where a raw address would go out unencrypted on whatever network it is on.
+  usually does not resolve, so nothing is sent, where a raw address would go out unencrypted on whatever network it is on.
 - The loopback endpoint is unchanged, so hooks on this Mac need no token.
 
 On another machine, the hooks and `notify.py` read the address and token from `PET_NOTIFY_URL` and

@@ -156,3 +156,22 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
   21:22:58 to 21:49:52 and two boots around 21:49:35 and 21:49:53 (John pressed reset at least once).
 - Odd one: a 90 s capture at 21:52 contained one garbled burst where an alive line should have been, while captures a
   minute later were clean at the same 115200 baud. Not understood; watch for it.
+
+## 2026-10-16: OTA partition table for projects/pet (issue #16; built, not yet flashed)
+
+- `projects/pet/partitions.csv` changes from one 8 MB `factory` app to `otadata` + `ota_0` + `ota_1` (4 MB each), with
+  nvs, phy_init and the 7 MB SPIFFS `storage` as before. The first build with this table has to go in over USB with
+  the usual `idf.py -C projects/pet -p /dev/cu.usbmodem5B610404781 -b 921600 flash`, which writes the bootloader,
+  the new table, a blank `otadata` and the app into `ota_0`. After that `tools/ota_push.py` updates the box over the
+  LAN (`projects/pet/README.md`, "Updating over Wi-Fi").
+- The table must not change again without another USB flash. An app cannot rewrite the table it runs from, and an
+  image built for a different table and sent over the air would sit at offsets the bootloader does not expect: that
+  is the one way OTA can brick the box, so `partitions.csv` is now a file to leave alone.
+- `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` is on. Lines the code prints: at boot `ota: running pet <version> (built
+  ...) from ota_0 at 0x20000`, with `first boot of this image: rolled back at the next reset unless MQTT connects`
+  appended after an update; `ota: image <version> confirmed: it stays` once MQTT is up; during an update
+  `ota: fetching http://...`, `ota: image <version> built ..., N bytes, writing ota_1`, a percentage line every 10 %,
+  then `ota: written and verified; rebooting into <version>`. A USB-flashed image is never on trial (its `otadata`
+  entry is blank, the bootloader falls through to `ota_0`), so no confirm line appears after a cable flash.
+- Recovery: `idf.py -p <port> flash` brings back a working `ota_0`; `idf.py -p <port> erase-otadata` alone makes the
+  bootloader boot `ota_0` again without rewriting the app.

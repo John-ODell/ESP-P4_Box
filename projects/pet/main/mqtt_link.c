@@ -1,5 +1,5 @@
-/* Thin wrapper over esp-mqtt: connect to the bridge's broker, subscribe to pet/state, pet/event and pet/notify,
- * publish pet/ack. */
+/* Thin wrapper over esp-mqtt: connect to the bridge's broker, subscribe to pet/state, pet/event, pet/notify and
+ * pet/cmd, publish pet/ack and pet/ota. */
 #include <stdlib.h>
 #include <string.h>
 #include "mqtt_link.h"
@@ -23,6 +23,7 @@ static void handler(void *arg, esp_event_base_t base, int32_t id, void *data)
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_STATE, 1);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_EVENT, 1);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_NOTIFY, 1);
+        esp_mqtt_client_subscribe(s_client, PET_TOPIC_CMD, 1);
         if (s_on_status) {
             s_on_status(true);
         }
@@ -96,12 +97,12 @@ bool mqtt_link_connected(void)
     return s_connected;
 }
 
-bool mqtt_link_publish(const char *topic, const char *payload)
+bool mqtt_link_publish(const char *topic, const char *payload, bool retain)
 {
     if (!s_client) {
         return false;
     }
-    int id = esp_mqtt_client_enqueue(s_client, topic, payload, 0, 1, 0, true);
+    int id = esp_mqtt_client_enqueue(s_client, topic, payload, 0, 1, retain, true);
     if (id < 0) {
         ESP_LOGW(TAG, "publish to %s not queued (%d)", topic, id);
         return false;

@@ -1,5 +1,10 @@
 # Name,   Type, SubType, Offset,  Size, Flags
+# Two app slots for updates over Wi-Fi (#16): the running slot writes the new image into the other one and the
+# bootloader rolls back if the new one never checks in. Putting this table on the box takes one USB flash; after
+# that every image must be built against this same table, because an app cannot rewrite the table it runs from.
 nvs,      data, nvs,     ,        0x6000,
+otadata,  data, ota,     ,        0x2000,
 phy_init, data, phy,     ,        0x1000,
-factory,  app,  factory, ,        8M,
+ota_0,    app,  ota_0,   ,        4M,
+ota_1,    app,  ota_1,   ,        4M,
 storage,  data, spiffs,  ,        7M,

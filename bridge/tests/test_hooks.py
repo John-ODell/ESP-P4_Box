@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,35 @@ class StubBridge:
         self.server.server_close()
 
 
+class RawServer:
+    """Accepts one connection and answers `reply`, or nothing for 1.5 s when reply is None: a sick bridge."""
+
+    def __init__(self, reply):
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.url = f"http://127.0.0.1:{self.sock.getsockname()[1]}/event"
+        self.thread = threading.Thread(target=self._serve, args=(reply,), daemon=True)
+        self.thread.start()
+
+    def _serve(self, reply):
+        conn, _ = self.sock.accept()
+        with conn:
+            conn.settimeout(3)
+            try:
+                conn.recv(4096)
+            except OSError:
+                return
+            if reply is None:
+                time.sleep(1.5)
+            else:
+                conn.sendall(reply)
+
+    def close(self):
+        self.thread.join(timeout=5)
+        self.sock.close()
+
+
 class ClaudeHookTests(unittest.TestCase):
     def test_permission_prompt_needs_input(self):
         e = claude_hook.build_event({"hook_event_name": "Notification", "cwd": "/Users/j/Desktop/website",
@@ -66,10 +96,11 @@ class ClaudeHookTests(unittest.TestCase):
 
     def test_notification_without_type_or_title_still_notifies(self):
         e = claude_hook.build_event({"hook_event_name": "Notification", "cwd": "/w", "message": "Waiting\nmore"})
-        self.assertEqual((e["kind"], e["title"]), ("needs_input", "Waiting"))
+        self.assertEqual((e["kind"], e["title"], e["detail"]), ("needs_input", "Waiting", ""))
 
     def test_noise_notifications_are_dropped(self):
-        for ntype in ("auth_success", "agent_completed", "quota_auto_resume_fired", "elicitation_complete"):
+        for ntype in ("idle_prompt", "auth_success", "agent_completed", "quota_auto_resume_fired",
+                      "elicitation_complete"):
             with self.subTest(ntype=ntype):
                 self.assertIsNone(claude_hook.build_event({"hook_event_name": "Notification", "cwd": "/w",
                                                            "notification_type": ntype, "message": "x"}))
@@ -83,19 +114,27 @@ class ClaudeHookTests(unittest.TestCase):
     def test_prompt_clears_and_session_end_sends_nothing(self):
         e = claude_hook.build_event({"hook_event_name": "UserPromptSubmit", "cwd": "/w/box", "prompt": "yes"})
         self.assertEqual((e["kind"], e["session"]), ("cleared", "box"))
+        for source, expect in (("user", "cleared"), ("sdk", "cleared"), ("loop_wakeup", None),
+                               ("schedule_wakeup", None), ("poll_event", None)):
+            with self.subTest(source=source):
+                e = claude_hook.build_event({"hook_event_name": "UserPromptSubmit", "cwd": "/w/box", "source": source})
+                self.assertEqual(e and e["kind"], expect)
         self.assertIsNone(claude_hook.build_event({"hook_event_name": "SessionEnd", "cwd": "/w/box", "reason": "other"}))
 
     def test_other_events_send_nothing(self):
         self.assertIsNone(claude_hook.build_event({"hook_event_name": "PreToolUse", "cwd": "/w"}))
         self.assertIsNone(claude_hook.build_event({}))
 
-    def test_session_name_prefers_the_title(self):
-        self.assertEqual(claude_hook.session_name({"session_title": " backlight fix ", "cwd": "/w/box"}),
-                         "backlight fix")
-        self.assertEqual(claude_hook.session_name({"session_title": "", "cwd": "/w/box/"}), "box")
+    def test_session_name_is_the_folder_even_when_the_session_has_a_title(self):
+        # session_title reaches only UserPromptSubmit, never Stop or Notification, so keying by it would leave
+        # bubbles that never clear (found in the review of PR #14)
+        self.assertEqual(claude_hook.session_name({"session_title": "backlight fix", "cwd": "/w/box"}), "box")
+        self.assertEqual(claude_hook.session_name({"cwd": "/w/box/"}), "box")
         env = os.environ.get("CLAUDE_PROJECT_DIR")
-        os.environ.pop("CLAUDE_PROJECT_DIR", None)
         try:
+            os.environ["CLAUDE_PROJECT_DIR"] = "/w/proj"
+            self.assertEqual(claude_hook.session_name({}), "proj")
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
             self.assertEqual(claude_hook.session_name({}), "claude")
         finally:
             if env is not None:
@@ -153,8 +192,27 @@ class CodexNotifyTests(unittest.TestCase):
                 run = subprocess.run([PY, str(HOOKS / "codex_notify.py"), "--then", *chain, payload],
                                      env=env, capture_output=True, text=True, timeout=20)
                 self.assertEqual((run.returncode, run.stdout), (0, ""))
+                for _ in range(200):  # the chain is started after the post and not waited on
+                    if out.exists() and out.stat().st_size:
+                        break
+                    time.sleep(0.05)
                 self.assertEqual(json.loads(out.read_text()), [payload])
             self.assertEqual([(b["kind"], b["session"]) for b in stub.bodies], [("done", "api")])
+        finally:
+            stub.close()
+
+    def test_a_missing_or_slow_chain_never_costs_the_event(self):
+        stub = StubBridge()
+        try:
+            env = dict(os.environ, PET_NOTIFY_URL=stub.url)
+            payload = json.dumps({"type": "agent-turn-complete", "last-assistant-message": "ok", "cwd": "/w/api"})
+            started = time.monotonic()
+            for chain in (["/nonexistent/notify-command", "turn-ended"], ["sleep", "3"]):
+                run = subprocess.run([PY, str(HOOKS / "codex_notify.py"), "--then", *chain, payload],
+                                     env=env, capture_output=True, text=True, timeout=20)
+                self.assertEqual((run.returncode, run.stdout, run.stderr), (0, "", ""), chain)
+            self.assertLess(time.monotonic() - started, 2.5)
+            self.assertEqual([b["kind"] for b in stub.bodies], ["done", "done"])
         finally:
             stub.close()
 
@@ -171,6 +229,7 @@ class SnippetTests(unittest.TestCase):
                 for hook in entries[0]["hooks"]:
                     self.assertEqual(hook["type"], "command")
                     self.assertIn(script, hook["command"])
+                    self.assertIn('"$HOME/', hook["command"])
                     self.assertLessEqual(hook["timeout"], 5)
         notify = tomllib.loads((HOOKS / "codex-config.snippet.toml").read_text())["notify"]
         self.assertEqual((notify[0], notify[1].rsplit("/", 1)[-1], notify[2]), ("python3", "codex_notify.py", "--then"))
@@ -187,6 +246,16 @@ class PostAndScriptTests(unittest.TestCase):
         started = time.monotonic()
         self.assertFalse(pethook.post({"v": 1}, url="http://127.0.0.1:1/event"))
         self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_post_survives_a_sick_bridge(self):
+        for reply in (b"garbage\r\n\r\n", None):  # a non-HTTP answer, then a bridge that accepts and says nothing
+            server = RawServer(reply)
+            try:
+                started = time.monotonic()
+                self.assertFalse(pethook.post({"v": 1}, url=server.url))
+                self.assertLess(time.monotonic() - started, 2.0)
+            finally:
+                server.close()
 
     def test_claude_script_end_to_end(self):
         stub = StubBridge()

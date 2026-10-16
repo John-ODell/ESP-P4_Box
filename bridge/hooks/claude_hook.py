@@ -3,15 +3,17 @@
 
 Claude Code runs this with the hook payload as JSON on stdin (settings snippet: bridge/hooks/claude-settings.json).
 
-    Notification      -> needs_input   (permission prompts, idle prompts, questions; see NEEDS_INPUT_TYPES)
+    Notification      -> needs_input   (permission prompts and questions; see NEEDS_INPUT_TYPES)
     Stop              -> done          (title: first line of the last assistant message)
     UserPromptSubmit  -> cleared       (John answered in that session, so its bubble goes away)
     anything else     -> nothing is sent (SessionEnd on purpose: a one-shot `claude -p` run would clear its own
                                           `done` before anyone saw it; bubbles of closed sessions go with a tap)
 
-The session name is Claude Code's session title when one is set, otherwise the project folder name (cwd).
-Prints nothing on stdout (Claude Code feeds hook stdout back into the session on some events), swallows every
-error and always exits 0 within about a second, so a missing bridge can never block or slow a session.
+The session name is the last component of the project folder (cwd). Claude Code's session title is not used:
+it reaches only the UserPromptSubmit payload, never Stop or Notification, so keying by it would leave bubbles
+that never clear. Prints nothing on stdout (Claude Code feeds hook stdout back into the session on some events),
+swallows every error and always exits 0 within about a second, so a missing bridge can never block or slow a
+session.
 """
 import os
 import sys
@@ -20,16 +22,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pethook  # noqa: E402
 
 SOURCE = "claude"
-# notification_type values that mean "a person has to do something". auth_success, elicitation_complete,
-# elicitation_response, agent_completed and the quota_* types are noise for a desk pet.
-NEEDS_INPUT_TYPES = {"permission_prompt", "idle_prompt", "elicitation_dialog", "elicitation_url_dialog",
-                     "agent_needs_input"}
+# notification_type values that mean "a person has to decide something". idle_prompt is left out: it fires about
+# a minute after every finished turn and would turn each `done` into `needs_input`. auth_success,
+# elicitation_complete, elicitation_response, agent_completed and the quota_* types are noise for a desk pet.
+NEEDS_INPUT_TYPES = {"permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"}
+# UserPromptSubmit `source` values that are a person typing (the field is optional; wakeups of /loop, schedules
+# and polls carry other values once Claude Code sends it)
+TYPED_SOURCES = (None, "user", "sdk")
 
 
 def session_name(payload: dict) -> str:
-    title = payload.get("session_title")
-    if isinstance(title, str) and title.strip():
-        return title.strip()
     return pethook.folder_name(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR"), SOURCE)
 
 
@@ -40,12 +42,17 @@ def build_event(payload: dict):
         ntype = payload.get("notification_type")
         if ntype and ntype not in NEEDS_INPUT_TYPES:
             return None
-        title = (pethook.first_line(payload.get("title"), 80) or pethook.first_line(payload.get("message"), 80)
-                 or "needs your input")
-        kind, detail = "needs_input", pethook.first_line(payload.get("message"), 200)
+        kind = "needs_input"
+        heading, message = pethook.first_line(payload.get("title"), 80), pethook.first_line(payload.get("message"), 200)
+        if heading:
+            title, detail = heading, message
+        else:  # no separate title: the message is the title, and repeating it as detail says nothing
+            title, detail = message[:80] or "needs your input", ""
     elif event == "Stop":
         kind, title, detail = "done", pethook.first_line(payload.get("last_assistant_message"), 80) or "finished", ""
     elif event == "UserPromptSubmit":
+        if payload.get("source") not in TYPED_SOURCES:
+            return None
         kind, title, detail = "cleared", "", ""
     else:
         return None

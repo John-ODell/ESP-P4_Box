@@ -6,7 +6,7 @@ itself: the snippets are pasted by hand into the tool's own settings, after a lo
 
 | Tool | How it talks to the pet | Reports | Clears itself | Checked on this Mac |
 |---|---|---|---|---|
-| Claude Code (terminal and desktop app) | native hooks: `claude-settings.json` runs `claude_hook.py` | `needs_input` for permission and idle prompts and questions, `done` when a turn finishes | yes, when you send the next prompt in that session | live, Claude Code 2.1.261, `claude -p` with `--settings`, nothing global touched |
+| Claude Code (terminal and desktop app) | native hooks: `claude-settings.json` runs `claude_hook.py` | `needs_input` for permission prompts and questions, `done` when a turn finishes | yes, on the next prompt you type in a session in that folder | live, Claude Code 2.1.261, `claude -p` with `--settings`, nothing global touched |
 | Codex, lifecycle hooks | `codex-hooks.json` runs `codex_hook.py` | `needs_input` for approval requests, `done` | yes, next prompt | sample payloads only: no Codex CLI here, and whether the Codex inside the ChatGPT app runs `hooks.json` is unknown |
 | Codex, the older `notify` setting | `codex-config.snippet.toml` runs `codex_notify.py` | `done` only | no | sample payload only; chains the notify command already in `config.toml` |
 | Any script, cron job or local model | a wrapper around `../notify.py` | whatever you post, including `error` | your call | live |
@@ -15,17 +15,23 @@ itself: the snippets are pasted by hand into the tool's own settings, after a lo
 ## What the scripts do
 
 - `claude_hook.py` reads Claude Code's hook JSON from stdin. `Notification` with `notification_type`
-  `permission_prompt`, `idle_prompt`, `elicitation_dialog`, `elicitation_url_dialog` or `agent_needs_input` becomes
-  `needs_input` (title: the notification's title or first line); `Stop` becomes `done` (title: first line of the
-  last assistant message); `UserPromptSubmit` becomes `cleared`. Other notification types (`auth_success`,
-  `agent_completed`, `quota_*`) and other events send nothing. The session name is the session title when one is
-  set (`--name`, `/rename`), otherwise the project folder; two untitled sessions in one folder share one bubble.
+  `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog` or `agent_needs_input` becomes `needs_input`
+  (title: the notification's title, else its first line); `Stop` becomes `done` (title: first line of the last
+  assistant message); `UserPromptSubmit` becomes `cleared`, unless the payload says the prompt came from a `/loop`
+  or scheduled wakeup rather than from you (those wakeups still end in a `Stop`, so a looping session posts `done`
+  each round). Other notification types send nothing: `idle_prompt` fires a minute
+  after every finished turn and would turn each `done` into `needs_input`; `auth_success`, `agent_completed` and
+  `quota_*` are noise. The session name is the last component of the project folder (`cwd`), so every session in
+  a folder of that name, anywhere, shares one bubble. Claude Code's session title (`--name`, `/rename`) is not
+  used: it reaches only the `UserPromptSubmit` payload, not `Stop` or `Notification`, so keying by it would leave
+  bubbles that never clear.
 - `codex_hook.py` does the same for Codex lifecycle hooks: `PermissionRequest` becomes `needs_input` (title: the
   tool input's description, else "<tool> needs approval"; detail: the command), `Stop` becomes `done`,
-  `UserPromptSubmit` becomes `cleared`. Codex sends no session title, so the folder name is used.
+  `UserPromptSubmit` becomes `cleared`. The session name is the folder name here too.
 - `codex_notify.py` is for Codex's single `notify` command, which only fires on `agent-turn-complete`: it posts
-  `done`. Codex appends the payload as the last argument; with `--then CMD ARGS` the script first runs that command
-  with the same payload appended, so a notify command that is already configured keeps working.
+  `done`. Codex appends the payload as the last argument; with `--then CMD ARGS` the script posts its event and
+  then starts that command with the same payload appended, without waiting for it, so a notify command that is
+  already configured keeps working and can neither hold up nor lose the pet's event.
 - `pethook.py` is shared: first-line trimming, the folder name, the POST (no proxies, one-second timeout).
 - Every script prints nothing on stdout, swallows every error and exits 0, so a stopped bridge can never block or
   slow a session. `PET_NOTIFY_URL` overrides the endpoint for all of them.
@@ -41,8 +47,9 @@ expands; change the path if the repo is somewhere else. The hook's `timeout` is 
 
 **Codex.** Copy `codex-hooks.json` to `~/.codex/hooks.json` (every project) or `<repo>/.codex/hooks.json` (one
 project), then run `/hooks` in the Codex CLI to review and trust it: Codex skips a command hook until its exact
-text is trusted. If your Codex does not expand `~` in the command, write the absolute path. If lifecycle hooks do
-not run in your Codex, the older `notify` route reports finished turns only: see `codex-config.snippet.toml`.
+text is trusted. The command is written as `"$HOME/..."` like the Claude one; Codex also runs hook commands through
+a shell (its hooks engine starts `<shell> -c`), so it expands. If yours does not, write the absolute path. If lifecycle hooks do not run in your Codex, the older `notify`
+route reports finished turns only: see `codex-config.snippet.toml`.
 Codex allows one notify command, so chain the one you already have after `--then`.
 
 ## Try it without installing anything

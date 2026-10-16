@@ -3,6 +3,7 @@
 Each script puts its own folder on sys.path and imports this, so the three of them stay single-purpose and the
 bridge's Python package is not needed on the hook's import path.
 """
+import http.client
 import json
 import os
 import sys
@@ -34,15 +35,14 @@ def folder_name(cwd, fallback: str) -> str:
 
 
 def post(event: dict, url: str = URL, timeout: float = TIMEOUT) -> bool:
-    """POST one event to the bridge. False, never an exception, when it is not reachable or says no."""
+    """POST one event to the bridge. False, never an exception, when it is not reachable, sick or says no."""
     body = json.dumps(event).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     local = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # the bridge is on this machine
     try:
-        with local.open(req, timeout=timeout) as resp:
-            resp.read()
-        return True
-    except (urllib.error.URLError, OSError, ValueError):
+        with local.open(req, timeout=timeout) as resp:  # the body is not needed, and reading it would wait on it
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
         return False
 
 

@@ -9,8 +9,10 @@ argument, and this script passes it on unchanged:
 
     notify = ["python3", ".../codex_notify.py", "--then", "/path/to/OriginalCommand", "its-argument"]
 
-Codex only sends `agent-turn-complete` this way, so only `done` events arrive through notify; approvals and
-clearing need the lifecycle hooks (codex_hook.py). Always exits 0, prints nothing.
+The pet's event is posted first; the chained command is then started on its own and not waited on, so a missing
+or hanging command can neither hold this script nor cost the event. Codex only sends `agent-turn-complete` this
+way, so only `done` events arrive through notify; approvals and clearing need the lifecycle hooks
+(codex_hook.py). Always exits 0, prints nothing.
 """
 import json
 import os
@@ -52,17 +54,20 @@ def split_args(argv: list):
 
 
 def main(argv: list) -> int:
+    raw, chain = split_args(argv)
     try:
-        raw, chain = split_args(argv)
-        if chain and raw is not None:
-            subprocess.run(chain + [raw], check=False, timeout=10, stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         payload = json.loads(raw) if raw else None
         event = build_event(payload) if isinstance(payload, dict) else None
         if event:
             pethook.post(event)
     except Exception:  # never fail the caller
         pass
+    if chain and raw is not None:
+        try:  # the command that was configured before gets its call; detached, so nothing waits on it
+            subprocess.Popen(chain + [raw], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        except Exception:
+            pass
     return 0
 
 

@@ -159,6 +159,60 @@ class TargetTests(unittest.TestCase):
             server.server_close()
         self.assertEqual(seen, ["Bearer " + TOKEN, None])
 
+    def test_a_redirect_never_carries_the_token_to_another_host(self):
+        seen = []
+
+        class Elsewhere(BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        elsewhere = HTTPServer(("127.0.0.1", 0), Elsewhere)
+        target = f"http://127.0.0.1:{elsewhere.server_address[1]}/event"
+
+        class Redirect(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(307)
+                self.send_header("Location", target)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        redirect = HTTPServer(("127.0.0.1", 0), Redirect)
+        for server in (elsewhere, redirect):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+        url = f"http://127.0.0.1:{redirect.server_address[1]}/event"
+        self.assertFalse(pethook.post({"v": 1}, url=url, token=TOKEN))
+        home = Path(self.config).parent
+        (home / ".config" / "desk-pet").mkdir(parents=True)
+        (home / ".config" / "desk-pet" / "bridge.json").write_text(json.dumps({"url": url, "token": TOKEN}))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("PET_NOTIFY")}
+        env["HOME"] = str(home)
+        args = [sys.executable, str(BRIDGE / "notify.py"), "--source", "local", "--kind", "done", "--session", "s"]
+        run = subprocess.run(args, env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(run.returncode, 0)
+        self.assertIn("(307)", run.stderr)
+        self.assertEqual(seen, [])
+
+    def test_notify_py_exits_0_on_a_url_it_cannot_use(self):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("PET_NOTIFY")}
+        args = [sys.executable, str(BRIDGE / "notify.py"), "--source", "local", "--kind", "done", "--session", "s",
+                "--url", "http://127.0.0.1:notaport/event"]
+        run = subprocess.run(args, env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(run.returncode, 0)
+        self.assertIn("not reachable", run.stderr)
+
+    def test_the_handler_times_out_idle_clients(self):
+        served = Served(token=TOKEN, allow=LOCAL)
+        self.addCleanup(served.close)
+        self.assertEqual(served.server.RequestHandlerClass.timeout, 10)
+
     def test_notify_py_uses_the_file_and_keeps_its_token_from_another_url(self):
         served = Served(token=TOKEN, allow=LOCAL)
         self.addCleanup(served.close)

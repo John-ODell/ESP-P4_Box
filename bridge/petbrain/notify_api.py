@@ -127,6 +127,7 @@ def make_server(host: str, port: int, notifier: Notifier, token: str | None = No
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "pet-bridge/1"
+        timeout = 10  # seconds per socket read: a client that connects and says nothing cannot hold a thread forever
 
         def _admitted(self) -> bool:
             """True on the loopback server; on the tailnet one, only a tailnet address with the right token."""
@@ -137,13 +138,13 @@ def make_server(host: str, port: int, notifier: Notifier, token: str | None = No
             except ValueError:
                 source = None
             if source is None or not any(source in net for net in allow):
-                log.warning("refused %s %s from %s: not a tailnet address", self.command, self.path[:64],
+                log.warning("refused %s %r from %s: not a tailnet address", self.command, self.path[:64],
                             self.client_address[0])
                 self._send(403, {"ok": False, "error": "not a tailnet address"})
                 return False
             given = self.headers.get("Authorization", "").encode("utf-8", "replace")
             if not hmac.compare_digest(given, expected):
-                log.warning("refused %s %s from %s: missing or wrong token", self.command, self.path[:64],
+                log.warning("refused %s %r from %s: missing or wrong token", self.command, self.path[:64],
                             self.client_address[0])
                 self._send(401, {"ok": False, "error": "missing or wrong token"})
                 return False

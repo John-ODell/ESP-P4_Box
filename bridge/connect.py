@@ -370,10 +370,10 @@ class RemoteBridge(Tool):
         return "{}\n" if self._data(text) else text
 
     def redact(self, text: str) -> str:
-        return re.sub(r'("token"\s*:\s*")[^"]*(")', r"\1<hidden>\2", text)
+        return re.sub(r'("token"\s*:\s*")(?:[^"\\]|\\.)*(")', r"\1<hidden>\2", text)  # JSON escapes too
 
 
-TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{%d,}" % tailnet.MIN_TOKEN)  # what setup.py and secrets.token_urlsafe make
+TOKEN_RE = re.compile(r"[!-~]{%d,}" % tailnet.MIN_TOKEN)  # what the bridge takes and an HTTP header can carry
 
 
 def private_host(host: str) -> bool:
@@ -398,7 +398,7 @@ def check_url(url: str) -> str:
     if (parts.scheme not in ("http", "https") or not parts.hostname or parts.query or parts.fragment
             or parts.username is not None or parts.password is not None or port == 0):
         raise ConnectError(f"{url!r} is not a bridge address like {example}")
-    if not private_host(parts.hostname.lower()):
+    if not private_host(parts.hostname.lower().rstrip(".")):
         raise ConnectError(f"{parts.hostname} is not a Tailscale address. Use the home Mac's Tailscale name (like "
                            f"{example}) or its 100.x address; anywhere else the token would travel unencrypted.")
     path = parts.path.rstrip("/")
@@ -555,7 +555,7 @@ def share(repo: Path, out=print, name=tailnet_name) -> int:
     token = env.get("PET_TAILNET_TOKEN", "")
     if not tailnet.wanted(env.get("PET_TAILNET")) or not TOKEN_RE.fullmatch(token):
         out("Access from your other machines is off on this Mac. Run `python3 bridge/setup.py` to turn it on safely, "
-            "or set PET_TAILNET=on and a PET_TAILNET_TOKEN of 32+ random letters, digits, - and _ in bridge/.env, then "
+            "or set PET_TAILNET=on and a PET_TAILNET_TOKEN of 32+ random characters (no spaces) in bridge/.env, then "
             "restart the bridge.")
         return 1
     host = name()
@@ -600,7 +600,7 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
             out(str(e))
             return 2
         if not TOKEN_RE.fullmatch(args.token):
-            out(f"--token must be the {tailnet.MIN_TOKEN}+ character token (letters, digits, - and _) that "
+            out(f"--token must be the {tailnet.MIN_TOKEN}+ character token, with no spaces, that "
                 "`connect.py --share` printed on the home Mac.")
             return 2
         ok = change(RemoteBridge(home, repo, url, args.token), True, args.yes, out, ask)
@@ -615,8 +615,7 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
     remote = args.disconnect and "bridge" in args.disconnect and RemoteBridge(home, repo)
     if remote:  # back to this machine's own loopback bridge
         by_key["bridge"] = remote
-        if remote.connected():
-            out("The old token stays in the owner-only backup this makes; delete that file if you are done with it.")
+        remote_had_url = remote.connected()
     if args.connect or args.disconnect:
         names = args.connect or args.disconnect
         unknown = [n for n in names if n not in by_key]
@@ -630,6 +629,8 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
                 results.append(False)
                 continue
             results.append(change(by_key[name], bool(args.connect), args.yes, out, ask))
+            if name == "bridge" and remote_had_url and results[-1]:
+                out("The old token stays in the owner-only backup above; delete that file if you are done with it.")
         return 0 if all(results) else 1
     try:
         picks = ask("Pick by number to connect, or to disconnect one that is connected (e.g. 1 2), "

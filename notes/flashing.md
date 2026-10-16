@@ -138,3 +138,21 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
 - Cost: free internal RAM settles at about 142 KB with the pools internal (the `alive` log line now prints it next to
   the total); PSRAM free is unchanged at about 29 MB. Boot timing unchanged: IP 8.6 s, MQTT 8.65 s, retained state
   drawn 8.67 s after reset.
+
+## 2026-10-15 22:00: "it turns on then off" was the clock-based backlight schedule, now an idle timer
+
+- John's words: "if I unplug it it boots up, connects to wifi, then it goes black", "that's really fast off of the
+  boot, it looks like it shut down on itself so I pressed reset". Timeline: the box boots at full brightness, SNTP
+  syncs the clock about 12 s later, the old schedule sees 21:00+ and drops the backlight to 25% in one step (4% after
+  23:00). The hard step to a dark level reads as a crash. Not a reboot: the fixed firmware had been up since 21:49:53
+  with his taps in the log, and `Setting LCD backlight: 25%` appeared 60 s after each tap.
+- Replaced by John's spec, an idle timer: full after boot, after any touch and whenever the state changes; dim after
+  30 s without a touch (75% of full); off after 10 min; anything waiting for a tap holds full brightness; at night
+  (23:00-07:00) the dim is 40% and the off timer 3 min, with the sleeping face while idle. Levels glide through the
+  LEDC hardware fade on the BSP's channel (`CONFIG_BSP_DISPLAY_BRIGHTNESS_LEDC_CH`, 10-bit at 5 kHz). Everything is
+  in `projects/pet/main/pet_config.h`; each change is logged by `sched`.
+- Also added: `esp_reset_reason()` at boot and in every alive line (esptool's RTS reset shows as `power-on`), and the
+  touch wake fires on finger-down. Unexplained and now attributable next time: Mosquitto saw the box silent from
+  21:22:58 to 21:49:52 and two boots around 21:49:35 and 21:49:53 (John pressed reset at least once).
+- Odd one: a 90 s capture at 21:52 contained one garbled burst where an alive line should have been, while captures a
+  minute later were clean at the same 115200 baud. Not understood; watch for it.

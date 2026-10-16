@@ -25,7 +25,7 @@ Keeping the brain on the Mac means rules can change without reflashing, and a ph
 | 2. Hello-face firmware, display and touch | Done and verified on the board. |
 | 3. Pet brain with tests, read-only GitHub reader | Done. |
 | 4. MQTT from Mac to box, real state on screen | Done and verified on the board. |
-| 5. Pixel-art character, idle animations, reactions, stats swipe | Next. |
+| 5. Pixel-art character, idle animations, reactions, stats swipe | Done on the board: original character, weighted idle animations per mood, celebrate / notice / sleep reactions, clock, backlight schedule, stats swipe. Also fixed a reboot every 288 s inherited from milestone 4 (see Board notes). Visual sign-off pending. |
 | 6. Claude Code and Codex session notifications | Planned. |
 | 7. Bridge launches at login, setup docs | Planned. |
 
@@ -111,6 +111,7 @@ Things that will bite you:
 - **If the port stops answering,** unplug and replug the cable. Brookesia also needs a replug after flashing before it boots.
 - **2.4 GHz only.** The box cannot join 5 or 6 GHz networks. Dual-band routers that share one network name work fine.
 - **The Mac needs a fixed IP.** Give it a DHCP reservation, because the box has the broker's address built in.
+- **Keep the ESP-Hosted pools in internal RAM** (`CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=n`, already set in `projects/pet`). With the pools in PSRAM and the 128-byte L2 cache line, the SDMMC driver rejects every second transmit buffer and the box reboots every 288 s (`Failed to send data: 258` on the UART). Explained in [notes/flashing.md](notes/flashing.md).
 
 Full flashing history and gotchas are in [notes/flashing.md](notes/flashing.md).
 

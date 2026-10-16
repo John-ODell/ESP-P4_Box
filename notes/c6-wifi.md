@@ -62,3 +62,15 @@ python tools/serial_tail.py -t 40
 
 To test an actual connection, copy `projects/wifi-check/main/secrets.h.example` to `secrets.h` (gitignored), fill in a
 2.4 GHz SSID and password, rebuild, reflash.
+
+## Update 2026-10-15 20:50: periodic "Unrecoverable host sdio state" reboots were a host bug
+
+The pet firmware rebooted every 288 s with `H_SDIO_DRV: Failed to send data: 258`. That is not the old slave: it is
+the ESP-Hosted 2.12.11 host putting its SDIO transmit pool in PSRAM with 64-byte alignment while the P4 L2 cache
+runs 128-byte lines (esp-hosted-mcu issue 252). Details, the ARP timer that made it periodic, and the fix
+(`CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=n`) are in `flashing.md`. No slave OTA was needed.
+
+Recovery path, should a slave OTA ever be attempted and fail: Waveshare's wiki page for this board says it carries
+2.54 mm 4-pin pads for flashing the ESP32-C6 directly (C6 U0TXD/U0RXD, with C6 IO9 pulled low for download mode,
+per the FAQ on the sibling ESP32-P4-WIFI6 board). Not checked against the schematic here; verify the pinout before
+relying on it.

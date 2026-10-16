@@ -27,6 +27,7 @@ static bool s_wifi_up, s_mqtt_up;
 static pet_state_t s_state;
 static pet_notify_t s_notify;   /* the waiting sessions, newest first; touched only with the display lock held */
 static pet_notice_t s_top_seen; /* the newest entry ever on top of the list, same lock; later than it is news */
+static int s_shown;             /* index in s_notify of the entry in the bubble, 0 the newest; same lock */
 static bool s_swallow_click;   /* LVGL fires CLICKED after a gesture or long press; ignore that one */
 
 static const char *gesture_name(lv_dir_t d)
@@ -50,14 +51,28 @@ static int notify_index(const pet_notify_t *l, const pet_notice_t *key)
     return -1;
 }
 
-/* Display lock held: draw the newest waiting session, or nothing. */
+/* Display lock held: draw the waiting session at s_shown (the newest unless a bubble tap moved on), or nothing. */
 static void show_notify(bool announce)
 {
-    if (s_notify.n > 0) {
-        face_set_notice(&s_notify.items[0], s_notify.count, announce);
-    } else {
+    if (s_notify.n == 0) {
+        s_shown = 0;
         face_clear_notice();
+        return;
     }
+    if (s_shown >= s_notify.n) {
+        s_shown = 0; /* the shown one was the oldest and went away: round to the newest */
+    }
+    face_set_notice(&s_notify.items[s_shown], s_shown, s_notify.count, announce);
+}
+
+/* LVGL task, lock held: a tap on the bubble shows the next waiting session (the next older one; after the oldest,
+ * round to the newest) without acknowledging any. */
+static void notice_cycle(void)
+{
+    s_shown = (s_shown + 1) % s_notify.n;
+    ESP_LOGI(TAG, "cycle: %d of %d, %s/%s", s_shown + 1, s_notify.n, s_notify.items[s_shown].source,
+             s_notify.items[s_shown].session);
+    show_notify(false);
 }
 
 /* LVGL task, lock held: a tap acknowledges the session shown. The bridge drops it and republishes the list; the box
@@ -67,12 +82,16 @@ static void notice_tap(void)
     if (s_notify.n == 0) {
         return;
     }
-    pet_notice_t top = s_notify.items[0];
+    if (s_shown >= s_notify.n) {
+        s_shown = 0;
+    }
+    pet_notice_t top = s_notify.items[s_shown];
     char *json = pet_notify_ack_json(top.source, top.session);
     bool queued = json && mqtt_link_publish(PET_TOPIC_ACK, json);
     free(json);
     ESP_LOGI(TAG, "ack %s/%s%s", top.source, top.session, queued ? "" : " (not sent)");
-    memmove(&s_notify.items[0], &s_notify.items[1], (size_t)(s_notify.n - 1) * sizeof(pet_notice_t));
+    memmove(&s_notify.items[s_shown], &s_notify.items[s_shown + 1],
+            (size_t)(s_notify.n - s_shown - 1) * sizeof(pet_notice_t)); /* s_shown now names the next older one */
     s_notify.n--;
     if (s_notify.count > 0) {
         s_notify.count--;
@@ -105,6 +124,11 @@ static void touch_event_cb(lv_event_t *e)
         sched_touch();
         if (s_swallow_click) {
             s_swallow_click = false;
+            break;
+        }
+        if (s_notify.n > 1 && face_point_in_bubble(p)) {
+            ESP_LOGI(TAG, "tap on the bubble x=%d y=%d", (int)p.x, (int)p.y);
+            notice_cycle();
             break;
         }
         s_taps++;
@@ -202,7 +226,13 @@ static void on_notify(const char *payload, size_t len, bool retained)
             s_top_seen = nf.items[0];
         }
     }
+    /* Keep the entry in the bubble through a list update (a cycle in progress); news goes back to the newest. */
+    int keep = -1;
+    if (!news && s_notify.n > 0 && s_shown < s_notify.n) {
+        keep = notify_index(&nf, &s_notify.items[s_shown]);
+    }
     s_notify = nf;
+    s_shown = keep > 0 ? keep : 0;
     if (nf.n > 0) {
         ESP_LOGI(TAG, "notify: %d pending, newest %s/%s %s%s", nf.count, nf.items[0].source, nf.items[0].session,
                  nf.items[0].kind, retained ? " (retained)" : "");

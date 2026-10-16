@@ -22,7 +22,7 @@ static lv_obj_t *s_level, *s_xp_bar, *s_xp_text, *s_streak, *s_clock, *s_today, 
 static lv_obj_t *s_stats, *s_stats_body, *s_stats_bar;
 static lv_timer_t *s_banner_timer, *s_stats_timer;
 static pet_state_t s_last;
-static lv_obj_t *s_bubble, *s_bubble_who, *s_bubble_what, *s_bubble_title;
+static lv_obj_t *s_bubble, *s_bubble_who, *s_bubble_what, *s_bubble_title, *s_bubble_count;
 static bool s_banner_sticky;   /* the level-up banner waits for a tap */
 static bool s_notice_on;       /* an AI session waits: bubble up, character tinted */
 static lv_color_t s_notice_color;
@@ -162,6 +162,7 @@ void face_create(lv_obj_t *parent)
     s_bubble_who = bubble_line(s_bubble, &lv_font_montserrat_24, ACCENT_COLOR, 1);
     s_bubble_what = bubble_line(s_bubble, &lv_font_montserrat_24, INK_COLOR, 1);
     s_bubble_title = bubble_line(s_bubble, &lv_font_montserrat_16, DIM_COLOR, 2);
+    s_bubble_count = bubble_line(s_bubble, &lv_font_montserrat_16, DIM_COLOR, 1);
     show(s_bubble, false);
 
     /* Stats overlay, hidden until a swipe. */
@@ -348,9 +349,8 @@ static const char *kind_text(const char *kind)
     return kind[0] ? kind : "is waiting";
 }
 
-void face_set_notice(const pet_notice_t *n, int count, bool announce)
+void face_set_notice(const pet_notice_t *n, int pos, int count, bool announce)
 {
-    (void)count; /* #7 adds the counter and cycling; until then the newest session is the one shown */
     s_notice_on = true;
     s_notice_color = source_color(n->source);
     lv_label_set_text(s_bubble_who, n->session);
@@ -359,6 +359,10 @@ void face_set_notice(const pet_notice_t *n, int count, bool announce)
     lv_obj_set_style_text_color(s_bubble_what, strcmp(n->kind, "error") == 0 ? WARN_COLOR : INK_COLOR, 0);
     lv_label_set_text(s_bubble_title, n->title);
     show(s_bubble_title, n->title[0] != '\0');
+    if (count > 1) {
+        lv_label_set_text_fmt(s_bubble_count, "%d of %d waiting. Tap here for the next", pos + 1, count);
+    }
+    show(s_bubble_count, count > 1);
     lv_obj_set_style_border_color(s_bubble, s_notice_color, 0);
     show(s_bubble, true);
     apply_ink();
@@ -370,6 +374,16 @@ void face_set_notice(const pet_notice_t *n, int count, bool announce)
         }
     }
     apply_hold();
+}
+
+bool face_point_in_bubble(lv_point_t p)
+{
+    if (!s_notice_on) {
+        return false;
+    }
+    lv_area_t a;
+    lv_obj_get_coords(s_bubble, &a);
+    return p.x >= a.x1 && p.x <= a.x2 && p.y >= a.y1 && p.y <= a.y2;
 }
 
 void face_clear_notice(void)

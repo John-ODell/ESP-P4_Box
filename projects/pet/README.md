@@ -10,8 +10,8 @@ overlay on swipe, a clock from SNTP, and a backlight idle timer. Underneath: Wi-
 SDIO) and an MQTT subscription to the bridge's `pet/state`. Milestone 6 (box side, #6) adds the session bubble and
 source tint described below; that part is built and not yet verified on the board.
 
-Interactions, all passive otherwise: **tap** acknowledges (the waiting session's bubble, banner, stats, a waiting
-level-up), **swipe** any direction
+Interactions, all passive otherwise: **tap** acknowledges (the waiting session shown in the bubble, banner, stats, a
+waiting level-up), **tap on the bubble** shows the next waiting session, **swipe** any direction
 peeks at the stats for 12 s, **long press** is reserved for settings (later milestone).
 
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
@@ -36,8 +36,16 @@ acknowledges the session shown: the box publishes `pet/ack` with its source and 
 and republishes the list, and the next waiting session, if any, takes over; the last tap restores the normal colours
 and releases the backlight hold. The box drops the entry locally as well, so the bubble moves on even while the
 bridge is down. Because `pet/notify` is retained, a session that is still waiting comes straight back after a power
-cycle or a reconnect, without the reaction. With several sessions waiting only the newest is shown until #7 adds the
-counter and cycling.
+cycle or a reconnect, without the reaction.
+
+**Several sessions waiting** (issue #7). The list is newest first and the bubble starts on the newest; a fourth line
+says `1 of 3 waiting. Tap here for the next`. A tap on the bubble moves to the next older session, changing the name,
+the line under it and the tint to that session's source, without acknowledging anything, and rounds back to the
+newest after the oldest. A tap anywhere else acknowledges the session shown: the count drops by one and the next
+older one takes the bubble (the newest, if the shown one was the oldest). A new event puts the newest back in the
+bubble; any other list update keeps the one shown. The box keeps the newest eight (`PET_NOTIFY_SHOWN`) of the `count`
+the bridge reports, so the cycle covers at most eight. With one session waiting, a tap on the bubble is a tap like any
+other and acknowledges it.
 
 Before building, copy `main/secrets.h.example` to `main/secrets.h` (gitignored) and fill in the 2.4 GHz SSID and
 password, the Mac's IP, and the MQTT user/password from `bridge/.env`.

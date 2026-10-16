@@ -105,14 +105,15 @@ def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier:
         client.publish(topic, payload, qos=1, retain=retain)
 
     notifier = Notifier(publish, lambda: datetime.now(cfg["tz"]))
-    client.message_callback_add(TOPIC_ACK, lambda c, userdata, msg: notifier.ack(msg.payload))
-    notifier.publish_pending()  # the list lives in memory: after a restart nothing is pending, tell the box so
     try:
         server = make_server(cfg["http_host"], cfg["http_port"], notifier)
     except OSError as exc:
-        log.error("notify endpoint not started on %s:%s (%s); the GitHub loop runs without it",
+        # Most likely another bridge already serves the endpoint: leave its pending list and pet/ack alone.
+        log.error("notify endpoint not started on %s:%s (%s); the GitHub loop runs without notifications",
                   cfg["http_host"], cfg["http_port"], exc)
         return notifier
+    client.message_callback_add(TOPIC_ACK, lambda c, userdata, msg: notifier.ack(msg.payload))
+    notifier.publish_pending()  # the list lives in memory: after a restart nothing is pending, tell the box so
     serve_in_thread(server)
     log.info("notify endpoint: POST http://%s:%d/event", cfg["http_host"], cfg["http_port"])
     return notifier

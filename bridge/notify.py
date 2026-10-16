@@ -7,7 +7,8 @@
 
 kind: needs_input, done or error show on the box; cleared takes the session's bubble away.
 The bridge's address comes from --url or PET_NOTIFY_URL (default http://127.0.0.1:8765/event).
-Always exits 0 and gives up after two seconds, so a hook that calls it never blocks its tool.
+Always exits 0, even on a bad option, and gives up after two seconds, so a hook that calls it never blocks its
+tool. Proxy settings in the environment are ignored: the bridge is on this machine.
 """
 import argparse
 import json
@@ -27,12 +28,16 @@ def main() -> int:
     ap.add_argument("--url", default=os.environ.get("PET_NOTIFY_URL", "http://127.0.0.1:8765/event"))
     ap.add_argument("--timeout", type=float, default=2.0)
     ap.add_argument("--quiet", action="store_true", help="say nothing even when the bridge is unreachable")
-    a = ap.parse_args()
+    try:
+        a = ap.parse_args()
+    except SystemExit:  # argparse exits 2 on a bad option; Claude Code reads 2 from a hook as "block", so do not
+        return 0
     body = json.dumps({"v": 1, "source": a.source, "kind": a.kind, "session": a.session,
                        "title": a.title, "detail": a.detail}).encode()
     req = urllib.request.Request(a.url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(req, timeout=a.timeout) as resp:
+        with local.open(req, timeout=a.timeout) as resp:
             resp.read()
     except urllib.error.HTTPError as exc:
         if not a.quiet:

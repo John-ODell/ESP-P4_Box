@@ -76,7 +76,7 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 |---|---|---|---|
 | `pet/state` | bridge, every poll | yes | the state below |
 | `pet/event` | bridge, from the session-event endpoint below | no | `{v, ts, source, kind, session, title, detail}` |
-| `pet/notify` | bridge, after every accepted event or ack | yes | the pending list below |
+| `pet/notify` | bridge, after every accepted event or ack | yes | `{v, ts, count, pending: [{source, session, kind, title, ts}]}`, example below |
 | `pet/ack` | box, when a tap acknowledges a session (milestone 6) | no | `{source, session}` or `{all: true}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
@@ -124,11 +124,21 @@ python3 bridge/notify.py --source local --kind done --session "llama batch" --de
 | `ts` | no | ISO 8601; the bridge fills in the current time when missing |
 
 Rules: one pending entry per `source` plus `session`, a newer event replaces the older one, newest first. A bad body
-(not JSON, unknown `kind`, missing `source` or `session`, over 4 KB) gets a 400 and a log line; the GitHub loop is
-not affected. Every accepted event goes out on `pet/event` (not retained) and the whole pending list on `pet/notify`
-(retained: the newest 8 of up to 32 entries, plus `count`), so a box that reboots gets the list back. When the box
-acknowledges a tap on `pet/ack` with `{"source":"claude","session":"website"}` (or `{"all":true}`) the bridge drops
-the entry and republishes the list. The list lives in memory: a bridge restart publishes an empty list.
+(not JSON, unknown `kind`, missing `source` or `session`) gets a 400 with the reason, a body over 4 KB gets a 413, a
+request carrying a browser `Origin` header gets a 403, and each leaves a log line; the GitHub loop is not affected.
+Every accepted event goes out on `pet/event` (not retained) and the whole pending list on `pet/notify` (retained), so
+a box that reboots gets the list back:
+
+```json
+{"v":1,"ts":"2026-10-16T08:21:45-05:00","count":2,"pending":[
+  {"source":"local","session":"llama batch","kind":"done","title":"","ts":"2026-10-16T08:21:45-05:00"},
+  {"source":"claude","session":"website","kind":"needs_input","title":"Allow the edit?","ts":"2026-10-16T08:21:45-05:00"}]}
+```
+
+`pending` holds the newest 8 of up to 32 entries and `count` says how many are kept. An entry carries `title` but not
+`detail`, which only travels on `pet/event`. When the box acknowledges a tap on `pet/ack` with
+`{"source":"claude","session":"website"}` (or `{"all":true}`) the bridge drops the entry and republishes the list.
+The list lives in memory, so a bridge restart publishes an empty list (#12 is about keeping it across restarts).
 `GET http://127.0.0.1:8765/pending` shows what is waiting. Senders with native hooks (Claude Code, Codex) and the
 box's rendering are separate units: issues #5 and #6.
 

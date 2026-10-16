@@ -157,9 +157,9 @@ void sched_hold(bool on)
     if (on != s_hold) {
         s_hold = on;
         ESP_LOGI(TAG, "%s", on ? "hold: waiting for a tap" : "hold released");
-    }
-    if (!on) {
-        s_last_activity_us = esp_timer_get_time();
+        if (!on) {
+            s_last_activity_us = esp_timer_get_time(); /* a real release restarts the idle timer; a repeat does not */
+        }
     }
     update();
 }

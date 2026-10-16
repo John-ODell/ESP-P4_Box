@@ -363,17 +363,21 @@ void face_set_notice(const pet_notice_t *n, int count, bool announce)
     show(s_bubble, true);
     apply_ink();
     if (announce) {
-        ESP_LOGI(TAG, "notice: %s %s %s", n->source, n->session, n->kind);
-        anim_play(PET_ANIM_NOTICE, false);
+        ESP_LOGI(TAG, "notice: %s %s %s%s", n->source, n->session, n->kind,
+                 s_banner_sticky ? " (level-up celebration keeps playing)" : "");
+        if (!s_banner_sticky) { /* the notice reaction would end the until-tap celebration loop */
+            anim_play(PET_ANIM_NOTICE, false);
+        }
     }
     apply_hold();
 }
 
 void face_clear_notice(void)
 {
-    if (s_notice_on) {
-        ESP_LOGI(TAG, "no session waiting");
+    if (!s_notice_on) {
+        return; /* an empty list again (reconnect replay, bridge start): nothing to undo, and not activity */
     }
+    ESP_LOGI(TAG, "no session waiting");
     s_notice_on = false;
     show(s_bubble, false);
     apply_ink();

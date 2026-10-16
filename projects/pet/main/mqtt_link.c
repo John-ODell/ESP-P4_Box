@@ -106,6 +106,6 @@ bool mqtt_link_publish(const char *topic, const char *payload)
         ESP_LOGW(TAG, "publish to %s not queued (%d)", topic, id);
         return false;
     }
-    ESP_LOGI(TAG, "queued %s (msg_id %d%s)", topic, id, s_connected ? "" : ", link down, sends on reconnect");
+    ESP_LOGI(TAG, "queued %s (msg_id %d%s)", topic, id, s_connected ? "" : ", link down, sent if it is back within 30 s");
     return true;
 }

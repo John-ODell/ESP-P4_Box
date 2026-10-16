@@ -175,7 +175,7 @@ class TargetTests(unittest.TestCase):
 
         class Redirect(BaseHTTPRequestHandler):
             def do_POST(self):
-                self.send_response(307)
+                self.send_response(302)  # urllib follows 302 on a POST (as a GET); 307 it never follows
                 self.send_header("Location", target)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
@@ -197,7 +197,7 @@ class TargetTests(unittest.TestCase):
         args = [sys.executable, str(BRIDGE / "notify.py"), "--source", "local", "--kind", "done", "--session", "s"]
         run = subprocess.run(args, env=env, capture_output=True, text=True, timeout=20)
         self.assertEqual(run.returncode, 0)
-        self.assertIn("(307)", run.stderr)
+        self.assertIn("(302)", run.stderr)
         self.assertEqual(seen, [])
 
     def test_notify_py_exits_0_on_a_url_it_cannot_use(self):

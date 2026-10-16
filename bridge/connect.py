@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import ipaddress
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -371,11 +373,34 @@ class RemoteBridge(Tool):
         return re.sub(r'("token"\s*:\s*")[^"]*(")', r"\1<hidden>\2", text)
 
 
+TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{%d,}" % tailnet.MIN_TOKEN)  # what setup.py and secrets.token_urlsafe make
+
+
+def private_host(host: str) -> bool:
+    """A Tailscale name or address, or this machine: the only places a token may go over plain http."""
+    if host.endswith(".ts.net") or host == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or tailnet.in_tailnet(host)
+
+
 def check_url(url: str) -> str:
-    """The bridge URL as stored: http(s), a host, and the /event path; ConnectError for anything else."""
+    """The bridge URL as stored: http(s), a Tailscale host, a port, and the /event path; ConnectError otherwise."""
+    example = "http://your-mac.your-tailnet.ts.net:8765/event"
     parts = urllib.parse.urlsplit(url.strip())
-    if parts.scheme not in ("http", "https") or not parts.hostname or parts.query or parts.fragment:
-        raise ConnectError(f"{url!r} is not a bridge address like http://your-mac.your-tailnet.ts.net:8765/event")
+    try:
+        port = parts.port
+    except ValueError:
+        raise ConnectError(f"{url!r} has a port that is not a number from 1 to 65535") from None
+    if (parts.scheme not in ("http", "https") or not parts.hostname or parts.query or parts.fragment
+            or parts.username is not None or parts.password is not None or port == 0):
+        raise ConnectError(f"{url!r} is not a bridge address like {example}")
+    if not private_host(parts.hostname.lower()):
+        raise ConnectError(f"{parts.hostname} is not a Tailscale address. Use the home Mac's Tailscale name (like "
+                           f"{example}) or its 100.x address; anywhere else the token would travel unencrypted.")
     path = parts.path.rstrip("/")
     if path in ("", "/event"):
         return urllib.parse.urlunsplit((parts.scheme, parts.netloc, "/event", "", ""))
@@ -390,15 +415,17 @@ def probe(url: str, token: str, timeout: float = 2) -> str:
     """How the bridge behind an /event URL answers GET /pending with this token, in a few words."""
     base = url.rsplit("/", 1)[0]
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with opener.open(urllib.request.Request(base + "/pending", headers=headers), timeout=timeout) as resp:
+        with pethook.opener().open(urllib.request.Request(base + "/pending", headers=headers),
+                                   timeout=timeout) as resp:
             count = json.loads(resp.read() or b"{}").get("count", 0)
         return f"up at {base}, {count} waiting"
     except urllib.error.HTTPError as e:
         e.close()
         if e.code == 401:
             return f"answering at {base} but refusing this machine's token"
+        if 300 <= e.code < 400:
+            return f"redirecting {base} elsewhere; not followed, so the token went nowhere else"
         if e.code == 403:
             return f"answering at {base} but refusing this machine's address (not on Tailscale?)"
         return f"answering at {base} with HTTP {e.code}"
@@ -432,6 +459,13 @@ def show(items: list[Tool], out=print) -> None:
     out("")
 
 
+def write_private(path: Path, data: bytes) -> None:
+    """Create `path` (replacing any stale copy) as owner-only before a single byte goes in."""
+    path.unlink(missing_ok=True)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as f:
+        f.write(data)
+
+
 def change(tool: Tool, connect: bool, yes: bool, out=print, ask=input) -> bool:
     """Show the edit, ask, back up, write, read back. True when the tool ends up in the asked-for state."""
     path = tool.path()
@@ -461,23 +495,23 @@ def change(tool: Tool, connect: bool, yes: bool, out=print, ask=input) -> bool:
     tmp = path.with_name(path.name + ".pet-tmp")
     try:
         private = getattr(tool, "private", False)
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700 if private else 0o777)
+        path.parent.mkdir(parents=True, exist_ok=True)
         if private:  # holds a token: owner only from the first byte, whatever the umask or the old file said
-            tmp.unlink(missing_ok=True)
-            tmp.touch(mode=0o600)
-        tmp.write_text(new, encoding="utf-8")
+            path.parent.chmod(0o700)  # ~/.config/desk-pet is ours alone
+            write_private(tmp, new.encode("utf-8"))
+        else:
+            tmp.write_text(new, encoding="utf-8")
         if path.exists():
             stamp = f"{path.name}.pet-backup-{datetime.now():%Y%m%d-%H%M%S}"
             backup, n = path.with_name(stamp), 1
             while backup.exists():  # two writes in one second keep both backups
                 backup, n = path.with_name(f"{stamp}-{n}"), n + 1
-            shutil.copy2(path, backup)
-            shutil.copymode(path, tmp)  # config.toml is 0600; keep it that way
+            if private:
+                write_private(backup, path.read_bytes())
+            else:
+                shutil.copy2(path, backup)
+                shutil.copymode(path, tmp)  # config.toml is 0600; keep it that way
             out(f"Backup: {backup}")
-        if private:
-            tmp.chmod(0o600)
-            if path.exists():
-                backup.chmod(0o600)
         os.replace(tmp, path)
     except OSError as e:
         tmp.unlink(missing_ok=True)
@@ -495,7 +529,7 @@ def read_env(path: Path) -> dict:
         for line in path.read_text(encoding="utf-8").splitlines():
             key, sep, value = line.partition("=")
             if sep and not key.strip().startswith("#"):
-                values[key.strip()] = value.strip()
+                values[key.strip()] = value.strip().strip('"').strip("'")  # as the bridge reads it
     return values
 
 
@@ -519,9 +553,9 @@ def share(repo: Path, out=print, name=tailnet_name) -> int:
     """On the home Mac: the one line to run on another machine, with this bridge's tailnet address and token."""
     env = read_env(repo / "bridge" / ".env")
     token = env.get("PET_TAILNET_TOKEN", "")
-    if not tailnet.wanted(env.get("PET_TAILNET")) or len(token) < tailnet.MIN_TOKEN:
+    if not tailnet.wanted(env.get("PET_TAILNET")) or not TOKEN_RE.fullmatch(token):
         out("Access from your other machines is off on this Mac. Run `python3 bridge/setup.py` to turn it on safely, "
-            "or set PET_TAILNET=on and a PET_TAILNET_TOKEN of 32+ random characters in bridge/.env, then "
+            "or set PET_TAILNET=on and a PET_TAILNET_TOKEN of 32+ random letters, digits, - and _ in bridge/.env, then "
             "restart the bridge.")
         return 1
     host = name()
@@ -532,7 +566,7 @@ def share(repo: Path, out=print, name=tailnet_name) -> int:
     out(f"This bridge: {probe(url, token)}")
     out("On each of your other machines, with this repo cloned and Tailscale signed in to the same account, run:")
     out("")
-    out(f"  python3 bridge/connect.py --bridge {url} --token {token}")
+    out(f"  python3 bridge/connect.py --bridge {shlex.quote(url)} --token {shlex.quote(token)}")
     out("")
     out("(On Windows, `py` instead of `python3`.) The token is the key to your pet's bridge: paste it only on your own")
     out("machines, never in a chat, an issue or a screenshot. To change it, set a new PET_TAILNET_TOKEN and run this "
@@ -565,9 +599,9 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
         except ConnectError as e:
             out(str(e))
             return 2
-        if len(args.token) < tailnet.MIN_TOKEN:
-            out(f"--token must be the {tailnet.MIN_TOKEN}+ character token that `connect.py --share` printed on the "
-                "home Mac.")
+        if not TOKEN_RE.fullmatch(args.token):
+            out(f"--token must be the {tailnet.MIN_TOKEN}+ character token (letters, digits, - and _) that "
+                "`connect.py --share` printed on the home Mac.")
             return 2
         ok = change(RemoteBridge(home, repo, url, args.token), True, args.yes, out, ask)
         if ok:
@@ -578,8 +612,11 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
     if args.status:
         return 0
     by_key = {t.key: t for t in items}
-    if args.disconnect and "bridge" in args.disconnect:  # back to this machine's own loopback bridge
-        by_key["bridge"] = RemoteBridge(home, repo)
+    remote = args.disconnect and "bridge" in args.disconnect and RemoteBridge(home, repo)
+    if remote:  # back to this machine's own loopback bridge
+        by_key["bridge"] = remote
+        if remote.connected():
+            out("The old token stays in the owner-only backup this makes; delete that file if you are done with it.")
     if args.connect or args.disconnect:
         names = args.connect or args.disconnect
         unknown = [n for n in names if n not in by_key]

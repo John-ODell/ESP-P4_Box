@@ -4,21 +4,21 @@
       {
         "matcher": "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input",
         "hooks": [
-          { "type": "command", "command": "python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py\"", "timeout": 5 }
+          { "type": "command", "command": "python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py\" 2>/dev/null || true", "timeout": 5 }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py\"", "timeout": 5 }
+          { "type": "command", "command": "python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py\" 2>/dev/null || true", "timeout": 5 }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py\"", "timeout": 5 }
+          { "type": "command", "command": "python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py\" 2>/dev/null || true", "timeout": 5 }
         ]
       }
     ]

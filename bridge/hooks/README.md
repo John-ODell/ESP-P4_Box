@@ -43,7 +43,9 @@ itself: the snippets are pasted by hand into the tool's own settings, after a lo
 **Claude Code.** Merge the `hooks` block from `claude-settings.json` into `~/.claude/settings.json` (every
 project) or a project's `.claude/settings.json` (that project only). The command runs through `sh`, so `$HOME`
 expands; change the path if the repo is somewhere else. The hook's `timeout` is 5 s and the script gives up after
-1 s on its own.
+1 s on its own. The `|| true` at the end matters: `python3` exits 2 when the script file is missing, and Claude Code
+treats a hook's exit code 2 as a blocking error (`UserPromptSubmit` would refuse the prompt), so a moved repo must
+not be able to break a session.
 
 **Codex.** Copy `codex-hooks.json` to `~/.codex/hooks.json` (every project) or `<repo>/.codex/hooks.json` (one
 project), then run `/hooks` in the Codex CLI to review and trust it: Codex skips a command hook until its exact

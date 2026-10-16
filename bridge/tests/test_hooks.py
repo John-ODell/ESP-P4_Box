@@ -230,6 +230,7 @@ class SnippetTests(unittest.TestCase):
                     self.assertEqual(hook["type"], "command")
                     self.assertIn(script, hook["command"])
                     self.assertIn('"$HOME/', hook["command"])
+                    self.assertTrue(hook["command"].endswith(" 2>/dev/null || true"), hook["command"])
                     self.assertLessEqual(hook["timeout"], 5)
         notify = tomllib.loads((HOOKS / "codex-config.snippet.toml").read_text())["notify"]
         self.assertEqual((notify[0], notify[1].rsplit("/", 1)[-1], notify[2]), ("python3", "codex_notify.py", "--then"))

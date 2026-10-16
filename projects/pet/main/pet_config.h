@@ -8,13 +8,20 @@
 #define PET_SPRITE_X        72
 #define PET_SPRITE_Y        120
 
-#define PET_BRIGHT_DAY      60       /* percent */
-#define PET_BRIGHT_EVENING  25
-#define PET_BRIGHT_NIGHT    4
-#define PET_EVENING_HOUR    21       /* dim from here */
-#define PET_NIGHT_START     23       /* sleep animation + night brightness from here ... */
-#define PET_NIGHT_END       7        /* ... until here */
-#define PET_WAKE_SECONDS    60       /* a touch at night wakes the box for this long */
+/* Backlight: an idle timer, not a clock schedule. Full brightness after boot, after any touch and whenever the pet
+ * state changes; with no touch it dims after PET_DIM_AFTER_S and switches off after PET_OFF_AFTER_S. Anything that
+ * waits for a tap (level-up banner, session notifications) holds full brightness until acknowledged. At night the
+ * dim level is lower and the off timer shorter, and the face sleeps while idle. Levels are percent of LEDC duty. */
+#define PET_BRIGHT_FULL         60   /* what "on" looks like */
+#define PET_DIM_PERCENT         75   /* idle dim as a percentage of full; try 50 if 75 is still too bright */
+#define PET_DIM_AFTER_S         30
+#define PET_OFF_AFTER_S         600  /* 10 min without a touch; 0 keeps the dimmed screen on */
+#define PET_NIGHT_START         23   /* night rules from here ... */
+#define PET_NIGHT_END           7    /* ... until here */
+#define PET_NIGHT_DIM_PERCENT   40
+#define PET_NIGHT_OFF_AFTER_S   180  /* 3 min */
+#define PET_FADE_UP_MS          300  /* brightening is quick, dimming is slow */
+#define PET_FADE_DOWN_MS        1500
 
 #define PET_BANNER_MS       4000     /* goal / big-day banner auto-hide */
 #define PET_STATS_MS        12000    /* stats overlay auto-hide */

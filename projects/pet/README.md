@@ -10,8 +10,17 @@ overlay on swipe, a clock from SNTP, and a backlight schedule. Underneath: Wi-Fi
 SDIO) and an MQTT subscription to the bridge's `pet/state`.
 
 Interactions, all passive otherwise: **tap** acknowledges (banner, stats, a waiting level-up), **swipe** any direction
-peeks at the stats for 12 s, **long press** is reserved for settings (later milestone). Any touch at night wakes the
-backlight for a minute.
+peeks at the stats for 12 s, **long press** is reserved for settings (later milestone).
+
+**Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
+(`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a
+touch (`PET_DIM_AFTER_S`) it dims to 75% of full (`PET_DIM_PERCENT`; try 50 if that is still too bright). After 10
+minutes (`PET_OFF_AFTER_S`; 0 disables this step) the backlight switches off, and any touch brings it straight back.
+Between 23:00 and 07:00 (`PET_NIGHT_START`, `PET_NIGHT_END`) the dim level is 40% of full (`PET_NIGHT_DIM_PERCENT`),
+the off timer is 3 minutes (`PET_NIGHT_OFF_AFTER_S`) and the face sleeps while idle. Anything that waits for a tap,
+such as the level-up banner (and the session notifications of milestone 6), holds full brightness until you tap.
+Level changes glide (`PET_FADE_UP_MS` 300, `PET_FADE_DOWN_MS` 1500) and each one is logged on the UART as
+`sched: backlight 60% -> 45% (idle 30 s, dim)`. The screen never goes dark right after boot.
 
 Before building, copy `main/secrets.h.example` to `main/secrets.h` (gitignored) and fill in the 2.4 GHz SSID and
 password, the Mac's IP, and the MQTT user/password from `bridge/.env`.
@@ -32,8 +41,9 @@ Console is UART0 at 115200. Layout:
   the sleep loop. Frames are LVGL A8 images scaled 12x with antialiasing off, so each art pixel is a crisp 12x12 block.
 - `main/sprites.c` / `sprites.h`: **generated**, do not edit. Run `python3 tools/gen_sprites.py` after changing the
   character or the animation manifest in that script (`--preview sheet.png` writes a contact sheet to look at first).
-- `main/sched.c`: SNTP, clock label, backlight schedule (day 60%, 21:00 25%, 23:00-07:00 4% + sleep animation), touch
-  wake. Tunables in `main/pet_config.h` (timezone is a POSIX TZ string there).
+- `main/sched.c`: SNTP, clock label, backlight idle timer with LEDC fades (full, dim after 30 s, off after 10 min,
+  night variants, hold while something waits for a tap). Tunables in `main/pet_config.h` (timezone is a POSIX TZ
+  string there).
 - `main/net.c`: Wi-Fi station via `esp_wifi_remote` / ESP-Hosted with backoff reconnect.
 - `main/mqtt_link.c`: esp-mqtt client, subscribes to `pet/state` and `pet/event`.
 - `main/pet_state.c`: parses the state JSON (schema v1, see `bridge/README.md`).

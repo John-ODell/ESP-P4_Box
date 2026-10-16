@@ -349,7 +349,7 @@ static const char *kind_text(const char *kind)
     return kind[0] ? kind : "is waiting";
 }
 
-void face_set_notice(const pet_notice_t *n, int pos, int count, bool announce)
+void face_set_notice(const pet_notice_t *n, int pos, int count, int held, bool announce)
 {
     s_notice_on = true;
     s_notice_color = source_color(n->source);
@@ -359,8 +359,10 @@ void face_set_notice(const pet_notice_t *n, int pos, int count, bool announce)
     lv_obj_set_style_text_color(s_bubble_what, strcmp(n->kind, "error") == 0 ? WARN_COLOR : INK_COLOR, 0);
     lv_label_set_text(s_bubble_title, n->title);
     show(s_bubble_title, n->title[0] != '\0');
-    if (count > 1) {
+    if (count > 1 && held > 1) {
         lv_label_set_text_fmt(s_bubble_count, "%d of %d waiting. Tap here for the next", pos + 1, count);
+    } else if (count > 1) { /* the box holds one of several (taps while the bridge was away): nothing to cycle to */
+        lv_label_set_text_fmt(s_bubble_count, "%d of %d waiting", pos + 1, count);
     }
     show(s_bubble_count, count > 1);
     lv_obj_set_style_border_color(s_bubble, s_notice_color, 0);
@@ -378,9 +380,10 @@ void face_set_notice(const pet_notice_t *n, int pos, int count, bool announce)
 
 bool face_point_in_bubble(lv_point_t p)
 {
-    if (!s_notice_on) {
-        return false;
+    if (!s_notice_on || !lv_obj_has_flag(s_stats, LV_OBJ_FLAG_HIDDEN)) {
+        return false; /* the stats overlay draws above the bubble: while it is up, a tap anywhere closes it */
     }
+    lv_obj_update_layout(s_bubble); /* else the coords are from the last refresh; a bubble line may have come or gone */
     lv_area_t a;
     lv_obj_get_coords(s_bubble, &a);
     return p.x >= a.x1 && p.x <= a.x2 && p.y >= a.y1 && p.y <= a.y2;

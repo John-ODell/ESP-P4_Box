@@ -62,7 +62,7 @@ static void show_notify(bool announce)
     if (s_shown >= s_notify.n) {
         s_shown = 0; /* the shown one was the oldest and went away: round to the newest */
     }
-    face_set_notice(&s_notify.items[s_shown], s_shown, s_notify.count, announce);
+    face_set_notice(&s_notify.items[s_shown], s_shown, s_notify.count, s_notify.n, announce);
 }
 
 /* LVGL task, lock held: a tap on the bubble shows the next waiting session (the next older one; after the oldest,
@@ -70,8 +70,8 @@ static void show_notify(bool announce)
 static void notice_cycle(void)
 {
     s_shown = (s_shown + 1) % s_notify.n;
-    ESP_LOGI(TAG, "cycle: %d of %d, %s/%s", s_shown + 1, s_notify.n, s_notify.items[s_shown].source,
-             s_notify.items[s_shown].session);
+    ESP_LOGI(TAG, "cycle: %d of %d (%d held here), %s/%s", s_shown + 1, s_notify.count, s_notify.n,
+             s_notify.items[s_shown].source, s_notify.items[s_shown].session);
     show_notify(false);
 }
 
@@ -226,13 +226,19 @@ static void on_notify(const char *payload, size_t len, bool retained)
             s_top_seen = nf.items[0];
         }
     }
-    /* Keep the entry in the bubble through a list update (a cycle in progress); news goes back to the newest. */
+    /* Keep the entry in the bubble through a list update (a cycle in progress). News goes back to the newest. When
+     * the shown one is gone (acknowledged or cleared from the Mac), s_shown already names the next older one, as
+     * after a local ack; show_notify rounds past the oldest to the newest. */
     int keep = -1;
     if (!news && s_notify.n > 0 && s_shown < s_notify.n) {
         keep = notify_index(&nf, &s_notify.items[s_shown]);
     }
     s_notify = nf;
-    s_shown = keep > 0 ? keep : 0;
+    if (news) {
+        s_shown = 0;
+    } else if (keep >= 0) {
+        s_shown = keep;
+    }
     if (nf.n > 0) {
         ESP_LOGI(TAG, "notify: %d pending, newest %s/%s %s%s", nf.count, nf.items[0].source, nf.items[0].session,
                  nf.items[0].kind, retained ? " (retained)" : "");

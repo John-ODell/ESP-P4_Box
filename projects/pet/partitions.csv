@@ -1,5 +1,10 @@
 # Name,   Type, SubType, Offset,  Size, Flags
+# Two app slots for updates over Wi-Fi (#16): the running slot writes the new image into the other one and the
+# bootloader rolls back if the new one never checks in. The table and the bootloader only change over USB, so an
+# edit here does nothing on the box until the next cable flash, and every image has to fit a 4 MB slot.
 nvs,      data, nvs,     ,        0x6000,
+otadata,  data, ota,     ,        0x2000,
 phy_init, data, phy,     ,        0x1000,
-factory,  app,  factory, ,        8M,
+ota_0,    app,  ota_0,   ,        4M,
+ota_1,    app,  ota_1,   ,        4M,
 storage,  data, spiffs,  ,        7M,

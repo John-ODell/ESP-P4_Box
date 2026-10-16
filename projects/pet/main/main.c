@@ -16,6 +16,7 @@
 #include "face.h"
 #include "net.h"
 #include "mqtt_link.h"
+#include "ota.h"
 #include "pet_state.h"
 #include "pet_notify.h"
 #include "sched.h"
@@ -87,7 +88,7 @@ static void notice_tap(void)
     }
     pet_notice_t top = s_notify.items[s_shown];
     char *json = pet_notify_ack_json(top.source, top.session);
-    bool queued = json && mqtt_link_publish(PET_TOPIC_ACK, json);
+    bool queued = json && mqtt_link_publish(PET_TOPIC_ACK, json, false);
     free(json);
     ESP_LOGI(TAG, "ack %s/%s%s", top.source, top.session, queued ? "" : " (not sent)");
     memmove(&s_notify.items[s_shown], &s_notify.items[s_shown + 1],
@@ -201,6 +202,20 @@ static void on_mqtt_status(bool connected)
 {
     s_mqtt_up = connected;
     refresh_link_line();
+    if (connected) {
+        ota_confirm_running(); /* an image on trial has now proven itself: keep it (#16) */
+    }
+}
+
+static void on_cmd(const char *payload, size_t len, bool retained)
+{
+    if (retained) { /* a command left on the broker would run again at every boot: never obey one */
+        ESP_LOGW(TAG, "cmd: retained message ignored: %.*s", (int)len, payload);
+        return;
+    }
+    if (!ota_handle_cmd(payload, len)) {
+        ESP_LOGW(TAG, "cmd: not understood: %.*s", (int)len, payload);
+    }
 }
 
 static void on_notify(const char *payload, size_t len, bool retained)
@@ -279,6 +294,8 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
     } else if (strcmp(topic, PET_TOPIC_EVENT) == 0) {
         /* Each accepted event, for the UART; the screen follows the retained pet/notify list instead. */
         ESP_LOGI(TAG, "event: %.*s", (int)len, payload);
+    } else if (strcmp(topic, PET_TOPIC_CMD) == 0) {
+        on_cmd(payload, len, retained);
     }
 }
 
@@ -293,6 +310,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "starting display");
     ESP_LOGI(TAG, "boot: reset reason %s", reset_reason_name());
+    ota_report_boot();
     lv_display_t *disp = bsp_display_start();
     ESP_ERROR_CHECK(disp != NULL ? ESP_OK : ESP_FAIL);
     ESP_ERROR_CHECK(bsp_display_backlight_on());

@@ -8,7 +8,7 @@ itself: the snippets are pasted by hand into the tool's own settings, after a lo
 |---|---|---|---|---|
 | Claude Code (terminal and desktop app) | native hooks: `claude-settings.json` runs `claude_hook.py` | `needs_input` for permission prompts and questions, `done` when a turn finishes | yes, on the next prompt you type in a session in that folder | live, Claude Code 2.1.261, `claude -p` with `--settings`, nothing global touched |
 | Codex, lifecycle hooks | `codex-hooks.json` runs `codex_hook.py` | `needs_input` for approval requests, `done` | yes, next prompt | sample payloads only: no Codex CLI here, and whether the Codex inside the ChatGPT app runs `hooks.json` is unknown |
-| Codex, the older `notify` setting | `codex-config.snippet.toml` runs `codex_notify.py` | `done` only | no | sample payload only; chains the notify command already in `config.toml` |
+| Codex, the older `notify` setting | `codex-config.snippet.toml` runs `codex_notify.py` | `done` only | no: the bubble goes on the next finished turn or a tap | sample payload only; chains the notify command already in `config.toml` |
 | Any script, cron job or local model | a wrapper around `../notify.py` | whatever you post, including `error` | your call | live |
 | Chat apps without hooks (ChatGPT, Claude.ai in a browser, Cursor chat) | nothing | nothing | - | not possible without a wrapper |
 
@@ -37,6 +37,25 @@ itself: the snippets are pasted by hand into the tool's own settings, after a lo
   slow a session. `PET_NOTIFY_URL` overrides the endpoint for all of them.
 - `SessionEnd` is not wired on purpose. In a one-shot `claude -p` run it fires right after `Stop` and would clear the
   `done` bubble before anyone saw it. Bubbles of sessions you closed go away with a tap on the pet.
+
+## Replying in a session clears its bubble (issue #8)
+
+No tap is needed for a session you have answered. The hook posts `cleared` when you send the next prompt, the bridge
+drops that session's entry and republishes the retained `pet/notify` list, and the box redraws from that list
+(`projects/pet`, issue #6), so the bubble is gone a moment after Enter, well inside the 2 s of #8 once the hooks are
+installed and the box runs the #6 firmware. A `cleared` for a session that is not pending is a no-op: the bridge logs
+the event, `Pending.apply` returns False, the republished list is unchanged and the box does nothing
+(`bridge/tests/test_events.py`, `test_cleared_removes_and_is_a_no_op_otherwise`). Per sender:
+
+- Claude Code: yes. `UserPromptSubmit` becomes `cleared` for prompts you type (and SDK prompts). Wakeups of `/loop`,
+  schedules and polls do not clear, their `source` field says what they are, because nobody answered anything.
+  Answering a permission dialog is not a prompt, so a `needs_input` bubble stays until that turn ends (#15).
+- Codex, lifecycle hooks (`codex-hooks.json`): yes on paper, the same `UserPromptSubmit` to `cleared`, checked against
+  the hooks engine in the codex-rs source and sample payloads only. The Codex inside the ChatGPT app on this Mac has
+  no CLI, so no version could be read from it; #13 is the check on a machine with the Codex CLI.
+- Codex, the older `notify` setting: no. `notify` fires on `agent-turn-complete` only, so a bubble from this route is
+  replaced by `done` at the next finished turn, or goes with a tap.
+- Wrappers around `notify.py`: your call. Post `--kind cleared` when your script knows the person has answered.
 
 ## Install, by hand
 

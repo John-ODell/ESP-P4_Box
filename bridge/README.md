@@ -15,16 +15,27 @@ follows. Milestone 7 adds launch-at-login.
 
 ## Setup (once)
 
+From the repo root:
+
 ```bash
-brew install mosquitto
-cd bridge
-python3 -m venv .venv && .venv/bin/pip install paho-mqtt
-cp .env.example .env            # set MQTT_PASS to something random; GITHUB_TOKEN is optional (falls back to `gh auth token`)
-mosquitto/setup.sh              # writes mosquitto/pet.conf and the password file from .env
+python3 bridge/setup.py
 ```
 
-Put the same `MQTT_USER` / `MQTT_PASS` and the Mac's LAN IP into `projects/pet/main/secrets.h` (see the `.example`).
-The Mac should have a DHCP reservation so the IP in `secrets.h` stays valid.
+It writes `bridge/.env` with a strong MQTT password, keeps that file readable by you only, and, if this Mac is on
+Tailscale, offers to let your other devices reach the pet (with a strong secret token). If Tailscale is not installed
+it says what it is and where to get it, and leaves that off. It never prints a secret unless you pass
+`--show-secrets`, keeps every value you already set, and changes nothing on a second run. It ends with a numbered
+list of what is left, which on a new Mac is:
+
+```bash
+brew install mosquitto
+cd bridge && python3 -m venv .venv && .venv/bin/pip install paho-mqtt && cd ..
+bridge/mosquitto/setup.sh       # writes mosquitto/pet.conf and the password file from .env
+```
+
+Put the same `MQTT_USER` / `MQTT_PASS` (`python3 bridge/setup.py --show-secrets`) and the Mac's LAN IP into
+`projects/pet/main/secrets.h` (see the `.example`). The Mac should have a DHCP reservation so the IP in `secrets.h`
+stays valid. `GITHUB_TOKEN` is optional; without it the bridge uses `gh auth token`.
 
 ## Run it
 
@@ -151,11 +162,11 @@ box's rendering are separate units: issues #5 and #6.
 ### From your other machines, over Tailscale
 
 The endpoint above answers this Mac only. To let AI sessions on your other personal machines reach the pet, put this
-Mac on Tailscale and set in `.env`:
+Mac on Tailscale and run `python3 bridge/setup.py` (answer yes when it offers). It sets these in `.env`:
 
 ```bash
 PET_TAILNET=on
-PET_TAILNET_TOKEN=<32+ random characters: python3 -c "import secrets; print(secrets.token_urlsafe(32))">
+PET_TAILNET_TOKEN=<32+ random letters, digits, - and _, from Python's secrets module>
 ```
 
 The bridge then also listens on this Mac's own Tailscale address, which it finds with `tailscale ip -4` (set
@@ -186,8 +197,7 @@ python3 bridge/connect.py      # then connect that machine's AI tools as usual
 `--bridge` writes `~/.config/desk-pet/bridge.json` owner-only (0600, in a 0700 folder), shows the change with the
 token hidden, keeps a private backup, and says whether the bridge accepts that token. Every hook and `notify.py`
 reads it from then on; `PET_NOTIFY_URL` and `PET_NOTIFY_TOKEN` still win if set. `connect.py --disconnect bridge`
-puts that machine back on its own bridge. Treat the token like a password: paste it only on your own machines. A
-first-time setup command that does all of this for you is coming in #40.
+puts that machine back on its own bridge. Treat the token like a password: paste it only on your own machines.
 
 The box itself keeps using this Mac's broker on the home Wi-Fi: the ESP32 cannot
 run Tailscale.

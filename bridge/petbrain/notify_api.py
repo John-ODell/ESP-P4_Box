@@ -5,6 +5,9 @@
                     403 for a request that carries a browser Origin header
     GET  /pending   the current pending list, the same object that is retained on pet/notify
 
+A server made with a `token` (the tailnet listener, petbrain/tailnet.py) also answers 403 to a source address
+outside `allow` and 401 to a request without `Authorization: Bearer <token>`, before anything else is read.
+
 Notifier keeps the Pending list, publishes each accepted event on pet/event (not retained) and the pending list on
 pet/notify (retained), and drops entries when the box acknowledges on pet/ack. With a `store` path it also writes
 the list to that file whenever it publishes it and reads it back on start, so a bridge restart does not lose the
@@ -12,6 +15,8 @@ sessions that were waiting. The publish function is injected, so the tests run w
 """
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import json
 import logging
 import threading
@@ -114,11 +119,35 @@ class Notifier:
         return summary
 
 
-def make_server(host: str, port: int, notifier: Notifier) -> ThreadingHTTPServer:
-    """Bind the endpoint (port 0 picks a free port, for tests). Serve it with serve_in_thread()."""
+def make_server(host: str, port: int, notifier: Notifier, token: str | None = None,
+                allow: tuple = ()) -> ThreadingHTTPServer:
+    """Bind the endpoint (port 0 picks a free port, for tests). Serve it with serve_in_thread(). With `token`, every
+    request must come from an address in `allow` (ip_network objects) and carry that bearer token."""
+    expected = f"Bearer {token}".encode() if token else None
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "pet-bridge/1"
+
+        def _admitted(self) -> bool:
+            """True on the loopback server; on the tailnet one, only a tailnet address with the right token."""
+            if expected is None:
+                return True
+            try:
+                source = ipaddress.ip_address(self.client_address[0].split("%")[0])
+            except ValueError:
+                source = None
+            if source is None or not any(source in net for net in allow):
+                log.warning("refused %s %s from %s: not a tailnet address", self.command, self.path[:64],
+                            self.client_address[0])
+                self._send(403, {"ok": False, "error": "not a tailnet address"})
+                return False
+            given = self.headers.get("Authorization", "").encode("utf-8", "replace")
+            if not hmac.compare_digest(given, expected):
+                log.warning("refused %s %s from %s: missing or wrong token", self.command, self.path[:64],
+                            self.client_address[0])
+                self._send(401, {"ok": False, "error": "missing or wrong token"})
+                return False
+            return True
 
         def _send(self, status: int, obj: dict) -> None:
             data = json.dumps(obj).encode()
@@ -129,6 +158,8 @@ def make_server(host: str, port: int, notifier: Notifier) -> ThreadingHTTPServer
             self.wfile.write(data)
 
         def do_POST(self) -> None:
+            if not self._admitted():
+                return
             if self.headers.get("Origin"):  # browsers send Origin on cross-site POSTs; curl, urllib and hooks do not
                 log.warning("refused browser request from %s (Origin %r)", self.client_address[0],
                             self.headers.get("Origin"))  # %r: a folded header cannot add a log line
@@ -157,6 +188,8 @@ def make_server(host: str, port: int, notifier: Notifier) -> ThreadingHTTPServer
                 self._send(500, {"ok": False, "error": "bridge error, see its log"})
 
         def do_GET(self) -> None:
+            if not self._admitted():
+                return
             if self.path == "/pending":
                 self._send(200, notifier.pending())
             else:

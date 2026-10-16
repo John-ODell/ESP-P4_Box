@@ -9,7 +9,8 @@ bridge's own; run it with the bridge's venv so paho-mqtt is there:
     bridge/.venv/bin/python tools/ota_push.py --ip 10.0.0.20 --port 8070 --timeout 300
 
 The box takes the command only live (a retained pet/cmd is ignored), only over http://, and only for a pet image.
-Exit code 0 when the box reports the new version running and confirmed, 1 otherwise.
+Exit code 0 when the box reports the new version running and confirmed, 1 otherwise (failed, rolled back, timeout,
+broker refused, stopped with Ctrl-C).
 """
 from __future__ import annotations
 
@@ -108,6 +109,7 @@ def main() -> int:
 
     done = threading.Event()
     connected = threading.Event()
+    refused = threading.Event()
     seen: dict = {"sent": False, "rebooting": False, "ok": False, "before": None}
 
     def on_message(client, userdata, msg):
@@ -126,21 +128,33 @@ def main() -> int:
             seen["rebooting"] = True
         elif state == "failed":
             done.set()
+        elif state == "running" and st.get("rolled_back") == info["version"]:
+            print(f"the box rolled {info['version']} back: it never confirmed, so it never reached MQTT after the reboot")
+            done.set()
         elif state == "running" and st.get("confirmed") and st.get("version") == info["version"]:
             if seen["rebooting"] or seen["before"] != info["version"]:
                 seen["ok"] = True
                 done.set()
 
+    def on_connect(client, userdata, flags, rc, props):
+        if rc.is_failure:
+            print(f"broker {host}:{port} refused the connection: {rc} (check MQTT_USER and MQTT_PASS in bridge/.env)")
+            refused.set()
+            return
+        client.subscribe(TOPIC_OTA, qos=1)
+        connected.set()
+
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"ota-push-{os.getpid()}")
     if os.environ.get("MQTT_USER"):
         client.username_pw_set(os.environ["MQTT_USER"], os.environ.get("MQTT_PASS") or None)
     client.on_message = on_message
-    client.on_connect = lambda c, u, flags, rc, props: (c.subscribe(TOPIC_OTA, qos=1), connected.set())
+    client.on_connect = on_connect
     client.connect(host, port, keepalive=30)
     client.loop_start()
     try:
         if not connected.wait(10):
-            print(f"broker {host}:{port} not reachable")
+            if not refused.is_set():
+                print(f"broker {host}:{port} not reachable")
             return 1
         time.sleep(1)  # let the retained pet/ota in first, so it is not mistaken for a reply
         client.publish(TOPIC_CMD, json.dumps({"ota": url}), qos=1, retain=False).wait_for_publish(5)
@@ -149,6 +163,9 @@ def main() -> int:
         if not done.wait(a.timeout):
             print("timed out: the box never reported the new image running (check the UART if it is on the cable)")
         return 0 if seen["ok"] else 1
+    except KeyboardInterrupt:
+        print("stopped; the box may still be updating, watch pet/ota or the UART")
+        return 1
     finally:
         client.loop_stop()
         client.disconnect()

@@ -30,7 +30,9 @@
 #define OTA_HTTP_TIMEOUT_MS 15000
 
 static const char *TAG = "ota";
-static volatile bool s_busy; /* one update at a time; set and cleared on the MQTT task, read by the OTA task */
+static volatile bool s_busy;  /* one update at a time: set on the MQTT task, cleared by fail() on whichever task gave
+                               * up; a success ends in a reboot */
+static char s_rolled_back[32]; /* version of the image in the other slot that the bootloader rolled back, if any */
 
 static void screen(const char *text)
 {
@@ -57,6 +59,9 @@ static void report(const char *state, const char *version, int pct, const char *
     if (slot) {
         cJSON_AddStringToObject(o, "slot", slot);
         cJSON_AddBoolToObject(o, "confirmed", confirmed);
+        if (s_rolled_back[0]) {
+            cJSON_AddStringToObject(o, "rolled_back", s_rolled_back);
+        }
         const esp_app_desc_t *me = esp_app_get_description();
         char built[40];
         snprintf(built, sizeof built, "%s %s", me->date, me->time);
@@ -100,7 +105,7 @@ static void ota_task(void *arg)
 
     esp_err_t err = esp_https_ota_begin(&cfg, &h);
     if (err != ESP_OK) {
-        fail_err("connect", err, NULL);
+        fail_err("fetch", err, NULL); /* no server, a 404, a 5xx or a non-image body all end here */
         goto out;
     }
     err = esp_https_ota_get_img_desc(h, &img);
@@ -109,6 +114,10 @@ static void ota_task(void *arg)
         fail_err("header", err, NULL);
         goto out;
     }
+    img.version[sizeof img.version - 1] = '\0'; /* straight off the network, before any hash check: do not trust */
+    img.project_name[sizeof img.project_name - 1] = '\0'; /* the NULs */
+    img.date[sizeof img.date - 1] = '\0';
+    img.time[sizeof img.time - 1] = '\0';
     if (strncmp(img.project_name, me->project_name, sizeof img.project_name) != 0) {
         esp_https_ota_abort(h);
         char why[96];
@@ -171,6 +180,20 @@ void ota_report_boot(void)
     ESP_LOGI(TAG, "running %s %s (built %s %s) from %s at 0x%" PRIx32 "%s", me->project_name, me->version, me->date,
              me->time, run->label, run->address,
              on_trial(run) ? "; first boot of this image: rolled back at the next reset unless MQTT connects" : "");
+    /* After a rollback the bootloader has marked the other slot ABORTED; its own line about that is at debug level,
+     * so say it here, and in the pet/ota "running" report, so the Mac learns it too. */
+    const esp_partition_t *other = esp_ota_get_next_update_partition(NULL);
+    esp_ota_img_states_t st;
+    if (other && esp_ota_get_state_partition(other, &st) == ESP_OK && st == ESP_OTA_IMG_ABORTED) {
+        esp_app_desc_t d;
+        if (esp_ota_get_partition_description(other, &d) == ESP_OK) {
+            d.version[sizeof d.version - 1] = '\0';
+            strlcpy(s_rolled_back, d.version, sizeof s_rolled_back);
+        } else {
+            strlcpy(s_rolled_back, "unknown", sizeof s_rolled_back);
+        }
+        ESP_LOGW(TAG, "image %s in %s was rolled back: it never confirmed", s_rolled_back, other->label);
+    }
 }
 
 void ota_confirm_running(void)

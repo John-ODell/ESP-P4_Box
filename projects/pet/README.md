@@ -68,11 +68,18 @@ MQTT connects (`ota: image <version> confirmed: it stays` on the UART). A build 
 with wrong Wi-Fi credentials, is rolled back by the bootloader at that reset and the old image runs again. The box
 ignores a retained `pet/cmd` (a stale command must not run at every boot), accepts only `http://` URLs, and only
 images whose project name is `pet`. The version is `git describe` of the checkout (`-dirty` when uncommitted), and
-`pet/ota` is retained, so `mosquitto_sub -t pet/ota -C 1` says what the box runs without the cable. The cable stays
-the way back when both slots are bad: `idf.py flash` writes the table, a blank `otadata` and the app into `ota_0`.
-The table itself must not change again without a USB flash (`notes/flashing.md`, 2026-10-16). First build after
-this change in an existing checkout: delete `projects/pet/sdkconfig` so the new `sdkconfig.defaults` options apply;
-the build stops with a message if you forget.
+`pet/ota` is retained, so `mosquitto_sub -u <MQTT_USER> -P <MQTT_PASS> -t pet/ota -C 1` (the values from
+`bridge/.env`; the broker takes no anonymous clients) shows the box's last report without the cable: `running` with
+the version and slot after a connect, or `downloading`, `rebooting` or `failed` while an update is in flight or went
+wrong; after a rollback the `running` report also carries `rolled_back` with the version that never confirmed, and
+the UART says `ota: image <version> in ota_1 was rolled back: it never confirmed`. An image pushed over the air lands
+in whichever slot the table on the box names and finds its own slot at run time, so one `pet.bin` serves both slots;
+it has to fit the box's 4 MB slot (a bigger one fails the write) and one that cannot boot is rolled back. The table
+and the bootloader themselves change only over USB: an edit to `partitions.csv` does nothing on the box until the
+next cable flash, so leave it alone unless you plan one. The cable stays the way back when both slots are bad:
+`idf.py flash` writes the table, a blank `otadata` and the app into `ota_0`. First build after this change in an
+existing checkout: delete `projects/pet/sdkconfig` so the new `sdkconfig.defaults` options apply; the build stops
+with a message if you forget (`notes/flashing.md`, 2026-10-16).
 
 Console is UART0 at 115200. Layout:
 
@@ -93,7 +100,7 @@ Console is UART0 at 115200. Layout:
 - `main/ota.c`: updates over Wi-Fi: the `pet/cmd` command, the download into the other slot, the trial-and-confirm
   step, the `pet/ota` reports.
 - `partitions.csv`: nvs, otadata, phy_init, two 4 MB app slots `ota_0` and `ota_1`, 7 MB SPIFFS `storage`. Leave it
-  alone: changing it needs a USB flash and an image built for a different table would brick the box over the air.
+  alone: the table only changes over USB, and until that flash the checkout's picture of the box is wrong.
 
 **Gotcha: reboots every ~5 minutes.** If the UART shows `H_SDIO_DRV: sdio_write_task: ... Failed to send data: 258`
 followed by `Restarting host`, the ESP-Hosted memory pools are back in PSRAM. Keep

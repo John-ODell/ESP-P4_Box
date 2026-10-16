@@ -252,13 +252,15 @@ class LineConfig(Tool):
             return text
         lines = text.splitlines(keepends=True)
         extra = self.extra(lines)  # may refuse first, with the more useful reason
-        taken = self.hits(lines, self.KEY)
+        hook = self.hits(lines, self.KEY)
+        taken = [i for i in hook if self.SCRIPT not in lines[i]]
         if taken:
             raise ConnectError(f"{self.path()} already sets `{lines[taken[0]].strip()}`; remove it or edit by hand")
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"
         quoted = "'" + self.command().replace("'", "''") + "'"  # YAML single quotes: only ' itself is escaped
-        return "".join(lines + extra + [f"{self.KEY}: {quoted}  {self.MARK}\n"])
+        ours = [] if len(taken) < len(hook) else [f"{self.KEY}: {quoted}  {self.MARK}\n"]  # ours already there
+        return "".join(lines + extra + ours)
 
     def disconnect_text(self, text: str) -> str:
         lines = text.splitlines(keepends=True)

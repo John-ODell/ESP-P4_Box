@@ -122,6 +122,14 @@ class AiderConfigTests(Home):
         with self.assertRaisesRegex(connect.ConnectError, "notifications on"):
             tool.connect_text(off)
 
+    def test_our_hook_without_its_notifications_line_is_repaired_by_connect(self):
+        tool = self.tool(connect.Aider)
+        hook_only = "".join(line for line in tool.connect_text("").splitlines(True) if "notifications:" not in line)
+        self.assertFalse(tool.connected_in(hook_only))
+        fixed = tool.connect_text(hook_only)
+        self.assertTrue(tool.connected_in(fixed))
+        self.assertEqual(fixed.count("notifications-command:"), 1)
+
 
 class QuotedKeyTests(Home):
     def test_a_hand_quoted_goose_key_is_seen_and_not_doubled(self):

@@ -28,3 +28,21 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
 ## Monitoring later
 1. Replug, confirm `esptool.py --port /dev/cu.usbmodem5B610404781 chip_id` works.
 2. `idf.py -C vendor/waveshare-4b/firmware/brookesia -p /dev/cu.usbmodem5B610404781 monitor` (Ctrl+] to quit).
+
+## Update 2026-10-15 evening: plain ESP-IDF apps do not need the replug
+
+- Flashed `projects/wifi-check` (a plain ESP-IDF app, console on UART0 at 115200) with
+  `idf.py -p /dev/cu.usbmodem5B610404781 -b 921600 flash`. The app booted immediately after esptool's
+  "Hard resetting via RTS pin" and logged normally. The replug requirement above is a Brookesia quirk, not a board rule.
+- Keep the rule anyway for anything that brings up the display or the C6 in an unusual way, and do a replug whenever the
+  port stops answering.
+- `tools/serial_tail.py` opens the port without touching DTR/RTS and just prints what arrives. Use it instead of
+  `idf.py monitor` when you want zero resets, for example right after a replug (`--wait` polls for the port node).
+- **Trap:** the vendor's shared `vendor/waveshare-4b/config/sdkconfig.defaults` (pulled in by every vendor example's
+  CMakeLists) selects the **rev3.x** profile (`CONFIG_ESP32P4_REV_MIN_300=y`, 250 MHz PSRAM). Do not build vendor
+  examples in place for this rev1.3 board; copy them under `projects/` with our own `sdkconfig.defaults` carrying
+  `CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y`, `CONFIG_ESP32P4_REV_MIN_100=y`, `CONFIG_SPIRAM_SPEED_200M=y`. The bootloader
+  log should show `Min chip rev: v1.0 / Max chip rev: v1.99 / Chip rev: v1.3`.
+- A plain app's partition table lives at 0x10000 (IDF default); Brookesia's custom table is at 0x8000. Flashing one over
+  the other is fine, `idf.py flash` rewrites bootloader, table, and app.
+- C6 / Wi-Fi findings are in `notes/c6-wifi.md`.

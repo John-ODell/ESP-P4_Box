@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include "lvgl.h"
 #include "pet_state.h"
+#include "pet_notify.h"
 
 /* The face scene. All functions must be called with the BSP display lock held. */
 void face_create(lv_obj_t *parent);
@@ -12,3 +13,6 @@ void face_set_clock(const char *hhmm);
 void face_set_sleeping(bool sleeping);
 void face_toggle_stats(void);             /* swipe: peek at the numbers */
 void face_ack(void);                      /* tap: dismiss banner, stats, and a waiting reaction */
+void face_set_notice(const pet_notice_t *n, int count, bool announce); /* an AI session waits: bubble, source tint,
+                                                                           backlight hold; announce plays the notice */
+void face_clear_notice(void);             /* nothing waits: normal colours; hold released unless a banner waits */

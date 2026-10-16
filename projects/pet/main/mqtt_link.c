@@ -1,4 +1,5 @@
-/* Thin wrapper over esp-mqtt: connect to the bridge's broker, subscribe to pet/state and pet/event. */
+/* Thin wrapper over esp-mqtt: connect to the bridge's broker, subscribe to pet/state, pet/event and pet/notify,
+ * publish pet/ack. */
 #include <stdlib.h>
 #include <string.h>
 #include "mqtt_link.h"
@@ -21,6 +22,7 @@ static void handler(void *arg, esp_event_base_t base, int32_t id, void *data)
         ESP_LOGI(TAG, "connected to %s", PET_MQTT_URI);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_STATE, 1);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_EVENT, 1);
+        esp_mqtt_client_subscribe(s_client, PET_TOPIC_NOTIFY, 1);
         if (s_on_status) {
             s_on_status(true);
         }
@@ -92,4 +94,18 @@ esp_err_t mqtt_link_start(mqtt_msg_cb_t on_msg, mqtt_status_cb_t on_status)
 bool mqtt_link_connected(void)
 {
     return s_connected;
+}
+
+bool mqtt_link_publish(const char *topic, const char *payload)
+{
+    if (!s_client) {
+        return false;
+    }
+    int id = esp_mqtt_client_enqueue(s_client, topic, payload, 0, 1, 0, true);
+    if (id < 0) {
+        ESP_LOGW(TAG, "publish to %s not queued (%d)", topic, id);
+        return false;
+    }
+    ESP_LOGI(TAG, "queued %s (msg_id %d%s)", topic, id, s_connected ? "" : ", link down, sent if it is back within 30 s");
+    return true;
 }

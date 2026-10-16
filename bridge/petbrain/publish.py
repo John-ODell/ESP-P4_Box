@@ -7,8 +7,9 @@
 
 `pet/state` is published retained (QoS 1) so the box gets the latest state the
 moment it connects. The previous state is kept in bridge/var/last_state.json so
-one-shot events survive a restart. Session notifications (`pet/event`) come in
-milestone 6.
+one-shot events survive a restart. Session notifications from AI tools arrive on
+the local HTTP endpoint (notify_api.py) and go out on `pet/event` and the retained
+`pet/notify`.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ import paho.mqtt.client as mqtt
 
 from .brain import compute_state
 from .github_source import fetch_days, load_dotenv
+from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = ROOT / "var" / "last_state.json"
@@ -44,6 +46,8 @@ def config() -> dict:
         "poll_min": float(os.environ.get("PET_POLL_MIN", "10")),
         "tz": ZoneInfo(os.environ.get("PET_TZ", "America/Chicago")),
         "goal": int(os.environ.get("PET_GOAL", "20")),
+        "http_host": os.environ.get("PET_HTTP_HOST", "127.0.0.1"),
+        "http_port": int(os.environ.get("PET_HTTP_PORT", "8765")),
     }
 
 
@@ -59,8 +63,10 @@ def save_prev(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state))
 
 
-def connect(cfg: dict) -> mqtt.Client:
-    """Connect and wait for the broker's CONNACK; publishing before it is silently refused by paho."""
+def connect(cfg: dict, topics: tuple[str, ...] = ()) -> mqtt.Client:
+    """Connect and wait for the broker's CONNACK; publishing before it is silently refused by paho.
+
+    `topics` are subscribed inside on_connect, so a reconnect subscribes them again."""
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"pet-bridge-{os.getpid()}")
     if cfg["user"]:
         client.username_pw_set(cfg["user"], cfg["password"])
@@ -69,6 +75,9 @@ def connect(cfg: dict) -> mqtt.Client:
 
     def on_connect(c, userdata, flags, reason_code, properties):
         result["rc"] = reason_code
+        if not reason_code.is_failure:
+            for topic in topics:
+                c.subscribe(topic, qos=1)
         ready.set()
 
     client.on_connect = on_connect
@@ -88,6 +97,25 @@ def publish_state(client: mqtt.Client, state: dict) -> None:
     log.info("published %s (%d bytes): lv%s xp%s mood %s streak %s today %s events %s", TOPIC_STATE, len(payload),
              state.get("level"), state.get("xp"), state.get("mood"), state.get("streak"),
              state.get("today", {}).get("total"), state.get("events"))
+
+
+def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier:
+    """Session notifications: pet/ack from the box, the local HTTP endpoint, and an empty pending list on start."""
+    def publish(topic: str, payload: str, retain: bool) -> None:
+        client.publish(topic, payload, qos=1, retain=retain)
+
+    notifier = Notifier(publish, lambda: datetime.now(cfg["tz"]))
+    client.message_callback_add(TOPIC_ACK, lambda c, userdata, msg: notifier.ack(msg.payload))
+    notifier.publish_pending()  # the list lives in memory: after a restart nothing is pending, tell the box so
+    try:
+        server = make_server(cfg["http_host"], cfg["http_port"], notifier)
+    except OSError as exc:
+        log.error("notify endpoint not started on %s:%s (%s); the GitHub loop runs without it",
+                  cfg["http_host"], cfg["http_port"], exc)
+        return notifier
+    serve_in_thread(server)
+    log.info("notify endpoint: POST http://%s:%d/event", cfg["http_host"], cfg["http_port"])
+    return notifier
 
 
 def coerce(value: str):
@@ -121,7 +149,10 @@ def main() -> None:
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = config()
-    client = connect(cfg)
+    loop_mode = not (a.once or a.state_file)
+    client = connect(cfg, topics=(TOPIC_ACK,) if loop_mode else ())
+    if loop_mode:
+        start_notifier(cfg, client)
 
     if a.state_file:
         publish_state(client, json.loads(Path(a.state_file).read_text()))

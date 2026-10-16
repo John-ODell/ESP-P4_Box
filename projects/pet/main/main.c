@@ -1,5 +1,5 @@
 /* Milestone 5: sprite character with mood-weighted idle animations and reactions, stats swipe, clock,
- * backlight schedule, on top of the milestone 4 Wi-Fi + MQTT plumbing. */
+ * backlight idle timer, on top of the milestone 4 Wi-Fi + MQTT plumbing. */
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"

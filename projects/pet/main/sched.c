@@ -34,16 +34,23 @@ static void set_brightness(int pct, const char *why)
     }
     ESP_LOGI(TAG, "backlight %d%% -> %d%% (%s)", s_brightness, pct, why);
     int ms = pct > s_brightness ? PET_FADE_UP_MS : PET_FADE_DOWN_MS;
-    s_brightness = pct;
     uint32_t duty = (1023u * (uint32_t)pct) / 100u;
+    esp_err_t err = ESP_FAIL;
     if (s_fade_ready) {
         ledc_fade_stop(BL_MODE, BL_CH);
-        if (ledc_set_fade_with_time(BL_MODE, BL_CH, duty, ms) == ESP_OK &&
-            ledc_fade_start(BL_MODE, BL_CH, LEDC_FADE_NO_WAIT) == ESP_OK) {
-            return;
+        err = ledc_set_fade_with_time(BL_MODE, BL_CH, duty, ms);
+        if (err == ESP_OK) {
+            err = ledc_fade_start(BL_MODE, BL_CH, LEDC_FADE_NO_WAIT);
         }
     }
-    bsp_display_brightness_set(pct);
+    if (err != ESP_OK) {
+        err = bsp_display_brightness_set(pct); /* step instead of fade */
+    }
+    if (err == ESP_OK) {
+        s_brightness = pct; /* only an applied level counts; a failed write is logged and retried next tick */
+    } else {
+        ESP_LOGW(TAG, "backlight %d%% not applied: %s", pct, esp_err_to_name(err));
+    }
 }
 
 /* Recompute the clock label, the backlight level and the sleep state. Runs once a second from an LVGL timer and
@@ -83,7 +90,9 @@ static void update(void)
     } else if (idle_s < PET_DIM_AFTER_S) {
         target = PET_BRIGHT_FULL;
         snprintf(why, sizeof(why), "active");
-    } else if (off_after > 0 && idle_s >= off_after) {
+    } else if (s_brightness == 0 || (off_after > 0 && idle_s >= off_after)) {
+        /* Once off, stay off until a touch or new activity. At PET_NIGHT_END the off timer grows from the night
+         * value to the day value, and without this latch a box the night timer switched off would come back dim. */
         target = 0;
         snprintf(why, sizeof(why), "idle %d s, off%s", off_after, night ? ", night" : "");
     } else {

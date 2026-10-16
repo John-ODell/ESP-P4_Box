@@ -15,7 +15,7 @@
 #define PET_BRIGHT_FULL         60   /* what "on" looks like */
 #define PET_DIM_PERCENT         75   /* idle dim as a percentage of full; try 50 if 75 is still too bright */
 #define PET_DIM_AFTER_S         30
-#define PET_OFF_AFTER_S         600  /* 10 min without a touch; 0 keeps the dimmed screen on */
+#define PET_OFF_AFTER_S         600  /* 10 min without a touch; 0 keeps the dimmed screen on by day, night still switches off */
 #define PET_NIGHT_START         23   /* night rules from here ... */
 #define PET_NIGHT_END           7    /* ... until here */
 #define PET_NIGHT_DIM_PERCENT   40

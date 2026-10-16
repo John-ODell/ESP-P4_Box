@@ -20,6 +20,9 @@ class Home(unittest.TestCase):
     """A throwaway home folder holding the repo, so script paths come out as "$HOME/..." as on the Mac."""
 
     def setUp(self):
+        real = connect.bridge_state
+        connect.bridge_state = lambda: "stubbed"  # no test talks to a bridge that happens to run on this Mac
+        self.addCleanup(setattr, connect, "bridge_state", real)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name)
@@ -27,7 +30,7 @@ class Home(unittest.TestCase):
         (self.repo / "bridge" / "hooks").mkdir(parents=True)
         src = BRIDGE / "hooks" / "claude-settings.json"
         (self.repo / "bridge" / "hooks" / "claude-settings.json").write_text(src.read_text())
-        for name in ("claude_hook.py", "codex_notify.py", "goose_hook.py", "aider_hook.py"):
+        for name in ("claude_hook.py", "codex_notify.py", "pethook.py", "goose_hook.py", "aider_hook.py"):
             (self.repo / "bridge" / "hooks" / name).write_text("")
         self.out = []
 
@@ -146,7 +149,6 @@ class ChangeTests(Home):
         self.assertIn("not an ESP-P4_Box checkout", self.out[-1])
 
     def test_main_connects_with_yes_and_points_at_the_given_repo(self):
-        (self.repo / "bridge" / "hooks" / "claude_hook.py").write_text("")
         self.write(".claude/settings.json", "{}\n")
         code = connect.main(["--connect", "claude", "--yes", "--repo", str(self.repo)], home=self.home,
                             out=self.out.append)
@@ -154,6 +156,63 @@ class ChangeTests(Home):
         data = json.loads((self.home / ".claude" / "settings.json").read_text())
         command = data["hooks"]["Stop"][0]["hooks"][0]["command"]
         self.assertIn('"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py"', command)
+
+    def test_two_writes_in_one_second_keep_both_backups(self):
+        path = self.write(".codex/config.toml", CODEX_CONFIG, 0o600)
+        tool = self.tool(connect.CodexApp)
+        for on in (True, False, True):
+            self.assertTrue(connect.change(tool, on, yes=True, out=self.out.append))
+        self.assertEqual(len(list(path.parent.glob("config.toml.pet-backup-*"))), 3)
+
+    def test_an_unwritable_folder_is_a_message_not_a_traceback(self):
+        path = self.write(".claude/settings.json", "{}\n")
+        path.parent.chmod(0o500)
+        self.addCleanup(path.parent.chmod, 0o755)
+        self.assertFalse(connect.change(self.tool(connect.ClaudeCode), True, yes=True, out=self.out.append))
+        self.assertIn("could not write", self.out[-1])
+        self.assertEqual(path.read_text(), "{}\n")
+
+    def test_menu_rejects_bad_picks_and_survives_end_of_input(self):
+        for answer in ("5", "one"):
+            self.out.clear()
+            code = connect.main(["--repo", str(self.repo)], home=self.home, out=self.out.append, ask=lambda _: answer)
+            self.assertEqual(code, 2)
+            self.assertIn("Not a choice", self.out[-1])
+
+        def eof(_):
+            raise EOFError
+        self.assertEqual(connect.main(["--repo", str(self.repo)], home=self.home, out=self.out.append, ask=eof), 0)
+
+    def test_connect_skips_a_tool_that_is_not_on_this_mac(self):
+        real = connect.CodexApp.found
+        connect.CodexApp.found = lambda self: ""  # the real one also looks in /Applications
+        self.addCleanup(setattr, connect.CodexApp, "found", real)
+        code = connect.main(["--connect", "codex", "--yes", "--repo", str(self.repo)], home=self.home,
+                            out=self.out.append)
+        self.assertEqual(code, 1)
+        self.assertFalse((self.home / ".codex").exists())
+
+    def test_a_repo_path_a_shell_would_mangle_is_refused(self):
+        with self.assertRaises(connect.ConnectError):
+            connect.script_ref(Path('/opt/pet"$(x)'), self.home, "claude_hook.py")
+
+    def test_a_group_with_odd_hooks_does_not_crash_status(self):
+        tool = self.tool(connect.ClaudeCode)
+        self.assertFalse(tool.connected_in('{"hooks": {"Stop": [{"hooks": 3}]}}'))
+
+    def test_repeated_or_odd_picks_and_end_of_input_at_the_write_prompt(self):
+        self.write(".claude/settings.json", "{}\n")
+        answers = iter(["01 1"])
+
+        def ask(prompt):
+            if prompt.startswith("Write this"):
+                raise EOFError
+            return next(answers)
+        self.assertEqual(connect.main(["--repo", str(self.repo)], home=self.home, out=self.out.append, ask=ask), 1)
+        self.assertEqual(sum("left alone" in line for line in self.out), 1)  # one tool, asked once
+        self.assertEqual((self.home / ".claude" / "settings.json").read_text(), "{}\n")
+        code = connect.main(["--repo", str(self.repo)], home=self.home, out=self.out.append, ask=lambda _: "\u00b2")
+        self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":

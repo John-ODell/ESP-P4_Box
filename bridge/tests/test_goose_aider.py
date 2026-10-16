@@ -111,6 +111,27 @@ class AiderConfigTests(Home):
         self.assertFalse((self.home / ".aider.conf.yml").exists())
         self.assertIn("is not there", self.out[-1])
 
+    def test_quoted_on_values_count_and_off_means_not_connected(self):
+        tool = self.tool(connect.Aider)
+        for value in ('"true"', "'yes'", "1", "True"):
+            on = tool.connect_text(f"notifications: {value}\n")
+            self.assertEqual(on.count("notifications:"), 1, value)
+            self.assertTrue(tool.connected_in(on), value)
+        off = tool.connect_text("").replace("notifications: true", "notifications: false")
+        self.assertFalse(tool.connected_in(off))
+        with self.assertRaisesRegex(connect.ConnectError, "notifications on"):
+            tool.connect_text(off)
+
+
+class QuotedKeyTests(Home):
+    def test_a_hand_quoted_goose_key_is_seen_and_not_doubled(self):
+        tool = self.tool(connect.Goose)
+        with self.assertRaises(connect.ConnectError):
+            tool.connect_text('"GOOSE_STATUS_HOOK": say\n')
+        ours = "'GOOSE_STATUS_HOOK': python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/goose_hook.py\"\nx: 1\n"
+        self.assertTrue(tool.connected_in(ours))
+        self.assertEqual(tool.disconnect_text(ours), "x: 1\n")
+
 
 if __name__ == "__main__":
     unittest.main()

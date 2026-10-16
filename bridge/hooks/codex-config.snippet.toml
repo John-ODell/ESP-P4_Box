@@ -1,0 +1,7 @@
+# Codex `notify`, the older single-command route: only if lifecycle hooks (codex-hooks.json) do not run in your
+# Codex. It reports finished turns only (`done`); approvals and clearing need the hooks.
+#
+# Codex allows one notify command. If config.toml already has one (the Codex app sets one for its own
+# features), keep it by chaining it after --then: Codex appends the JSON payload as the last argument and
+# codex_notify.py passes it on unchanged.
+notify = ["python3", "/Users/you/Desktop/ESP-P4_Box/bridge/hooks/codex_notify.py", "--then", "/path/to/the/current/notify/command", "its-argument"]

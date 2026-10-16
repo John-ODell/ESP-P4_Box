@@ -138,7 +138,11 @@ a box that reboots gets the list back:
 `pending` holds the newest 8 of up to 32 entries and `count` says how many are kept. An entry carries `title` but not
 `detail`, which only travels on `pet/event`. When the box acknowledges a tap on `pet/ack` with
 `{"source":"claude","session":"website"}` (or `{"all":true}`) the bridge drops the entry and republishes the list.
-The list lives in memory, so a bridge restart publishes an empty list (#12 is about keeping it across restarts).
+The list is written to `bridge/var/pending.json` (gitignored, next to `last_state.json`) every time it is published and
+read back when the bridge starts, each entry through the same checks and caps as a posted event, so a restart publishes
+what was still waiting, with each entry's original `ts`. A missing file starts it empty; an unreadable or odd one starts
+it empty with a warning in the log; entries that are not what the bridge writes are dropped, with one warning saying
+how many. `--once` and `--state-file` runs never start the notifier and touch neither the file nor `pet/notify`.
 `GET http://127.0.0.1:8765/pending` shows what is waiting. Senders with native hooks (Claude Code, Codex) and the
 box's rendering are separate units: issues #5 and #6.
 

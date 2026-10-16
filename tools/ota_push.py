@@ -108,9 +108,9 @@ def main() -> int:
     print(f"serving {a.bin} ({len(data)} bytes, pet {info['version']} built {info['date']} {info['time']}) at {url}")
 
     done = threading.Event()
-    connected = threading.Event()
-    refused = threading.Event()
-    seen: dict = {"sent": False, "rebooting": False, "ok": False, "before": None}
+    answered = threading.Event()  # the broker took the connection or refused it
+    seen: dict = {"sent": False, "rebooting": False, "ok": False, "refused": False, "before": None,
+                  "before_rolled_back": None}
 
     def on_message(client, userdata, msg):
         try:
@@ -120,6 +120,7 @@ def main() -> int:
             return
         if msg.retain and not seen["sent"]:  # what the broker remembered from before this push
             seen["before"] = st.get("version")
+            seen["before_rolled_back"] = st.get("rolled_back")
             print(f"box before the push: {st}")
             return
         print("box: " + ", ".join(f"{k} {v}" for k, v in st.items()), flush=True)
@@ -128,21 +129,30 @@ def main() -> int:
             seen["rebooting"] = True
         elif state == "failed":
             done.set()
-        elif state == "running" and st.get("rolled_back") == info["version"]:
-            print(f"the box rolled {info['version']} back: it never confirmed, so it never reached MQTT after the reboot")
-            done.set()
-        elif state == "running" and st.get("confirmed") and st.get("version") == info["version"]:
-            if seen["rebooting"] or seen["before"] != info["version"]:
-                seen["ok"] = True
-                done.set()
+        elif state == "running":
+            # The box repeats its running report on every reconnect until its next reboot, so a report that is
+            # the same as before this push (a re-push of a version that rolled back earlier, or of the version
+            # already running, with the link blinking during the download) settles nothing until the reboot.
+            if st.get("rolled_back") == info["version"]:
+                if seen["rebooting"] or seen["before_rolled_back"] != info["version"]:
+                    print(f"the box rolled {info['version']} back: it never confirmed, so it never reached MQTT "
+                          "after the reboot")
+                    done.set()
+            elif st.get("confirmed") and st.get("version") == info["version"]:
+                if seen["rebooting"] or seen["before"] != info["version"]:
+                    seen["ok"] = True
+                    done.set()
 
     def on_connect(client, userdata, flags, rc, props):
         if rc.is_failure:
-            print(f"broker {host}:{port} refused the connection: {rc} (check MQTT_USER and MQTT_PASS in bridge/.env)")
-            refused.set()
+            if not seen["refused"]:  # paho keeps retrying while the main thread winds down; one line is enough
+                print(f"broker {host}:{port} refused the connection: {rc} "
+                      "(check MQTT_USER and MQTT_PASS in bridge/.env)")
+            seen["refused"] = True
+            answered.set()
             return
         client.subscribe(TOPIC_OTA, qos=1)
-        connected.set()
+        answered.set()
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"ota-push-{os.getpid()}")
     if os.environ.get("MQTT_USER"):
@@ -152,9 +162,10 @@ def main() -> int:
     client.connect(host, port, keepalive=30)
     client.loop_start()
     try:
-        if not connected.wait(10):
-            if not refused.is_set():
-                print(f"broker {host}:{port} not reachable")
+        if not answered.wait(10):
+            print(f"broker {host}:{port} not reachable")
+            return 1
+        if seen["refused"]:
             return 1
         time.sleep(1)  # let the retained pet/ota in first, so it is not mistaken for a reply
         client.publish(TOPIC_CMD, json.dumps({"ota": url}), qos=1, retain=False).wait_for_publish(5)

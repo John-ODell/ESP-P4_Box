@@ -226,19 +226,18 @@ static void on_notify(const char *payload, size_t len, bool retained)
             s_top_seen = nf.items[0];
         }
     }
-    /* Keep the entry in the bubble through a list update (a cycle in progress). News goes back to the newest. When
-     * the shown one is gone (acknowledged or cleared from the Mac), s_shown already names the next older one, as
-     * after a local ack; show_notify rounds past the oldest to the newest. */
+    /* Keep the entry in the bubble through a list update (a cycle in progress). When it is gone (acknowledged or
+     * cleared from the Mac), the next older one still listed takes its place, as after a local ack, whatever else
+     * the update changed (a retained replay after an outage can add entries above it as well). News, or nothing
+     * older left, goes to the newest. */
     int keep = -1;
-    if (!news && s_notify.n > 0 && s_shown < s_notify.n) {
-        keep = notify_index(&nf, &s_notify.items[s_shown]);
+    if (!news && s_notify.n > 0) {
+        for (int i = s_shown; i < s_notify.n && keep < 0; i++) {
+            keep = notify_index(&nf, &s_notify.items[i]);
+        }
     }
     s_notify = nf;
-    if (news) {
-        s_shown = 0;
-    } else if (keep >= 0) {
-        s_shown = keep;
-    }
+    s_shown = keep < 0 ? 0 : keep;
     if (nf.n > 0) {
         ESP_LOGI(TAG, "notify: %d pending, newest %s/%s %s%s", nf.count, nf.items[0].source, nf.items[0].session,
                  nf.items[0].kind, retained ? " (retained)" : "");

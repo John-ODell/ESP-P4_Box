@@ -1,0 +1,224 @@
+import json
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+from petbrain.events import EventError, Pending, parse_event, MAX_BODY, MAX_PENDING, MAX_TITLE, SHOWN_PENDING
+from petbrain.notify_api import Notifier, make_server, TOPIC_EVENT, TOPIC_NOTIFY
+
+NOW = datetime(2026, 10, 16, 9, 30, tzinfo=timezone.utc)
+
+
+def ev(**kw) -> dict:
+    base = {"source": "claude", "kind": "needs_input", "session": "website"}
+    base.update(kw)
+    return base
+
+
+class ParseTests(unittest.TestCase):
+    def test_minimal_event_is_filled_in(self):
+        self.assertEqual(parse_event(json.dumps(ev()), NOW),
+                         {"v": 1, "ts": "2026-10-16T09:30:00+00:00", "source": "claude", "kind": "needs_input",
+                          "session": "website", "title": "", "detail": ""})
+
+    def test_accepts_bytes_and_dicts(self):
+        self.assertEqual(parse_event(json.dumps(ev()).encode(), NOW)["session"], "website")
+        self.assertEqual(parse_event(ev(), NOW)["session"], "website")
+
+    def test_keeps_a_valid_ts(self):
+        self.assertEqual(parse_event(ev(ts="2026-10-16T08:00:00-05:00"), NOW)["ts"], "2026-10-16T08:00:00-05:00")
+
+    def test_rejects_bad_input(self):
+        bad = [b"\xff\xfe", "not json", "[1,2]", ev(source=""), ev(session="  "), {"kind": "done", "session": "x"},
+               ev(kind="ping"), ev(kind=None), ev(v=2), ev(v=True), ev(ts="yesterday"), ev(ts=12), ev(title=3)]
+        for raw in bad:
+            with self.subTest(raw=raw):
+                with self.assertRaises(EventError):
+                    parse_event(raw, NOW)
+
+    def test_normalises_text(self):
+        e = parse_event(ev(source=" Claude ", session="  my\n  project ", title="x" * 500, detail="a\x00b"), NOW)
+        self.assertEqual(e["source"], "claude")
+        self.assertEqual(e["session"], "my project")
+        self.assertEqual(len(e["title"]), MAX_TITLE)
+        self.assertEqual(e["detail"], "ab")
+
+    def test_ignores_unknown_fields(self):
+        self.assertNotIn("extra", parse_event(ev(extra=1), NOW))
+
+
+class PendingTests(unittest.TestCase):
+    def pend(self, *events) -> Pending:
+        p = Pending()
+        for e in events:
+            p.apply(parse_event(e, NOW))
+        return p
+
+    def test_one_entry_per_session_newest_first(self):
+        p = self.pend(ev(session="a", title="first"), ev(session="b"), ev(session="a", kind="done", title="second"))
+        s = p.summary(NOW)
+        self.assertEqual(s["count"], 2)
+        self.assertEqual([(e["session"], e["kind"], e["title"]) for e in s["pending"]],
+                         [("a", "done", "second"), ("b", "needs_input", "")])
+
+    def test_same_session_name_under_two_sources_stays_separate(self):
+        self.assertEqual(len(self.pend(ev(source="claude"), ev(source="codex"))), 2)
+
+    def test_cleared_removes_and_is_a_no_op_otherwise(self):
+        p = self.pend(ev(session="a"))
+        self.assertFalse(p.apply(parse_event(ev(session="zzz", kind="cleared"), NOW)))
+        self.assertEqual(len(p), 1)
+        self.assertTrue(p.apply(parse_event(ev(session="a", kind="cleared"), NOW)))
+        self.assertEqual(len(p), 0)
+
+    def test_remove_and_clear(self):
+        p = self.pend(ev(session="a"), ev(session="b"))
+        self.assertTrue(p.remove("Claude", " a "))  # normalised like a posted event
+        self.assertFalse(p.remove("claude", "a"))
+        self.assertTrue(p.clear())
+        self.assertFalse(p.clear())
+
+    def test_summary_is_capped_but_counts_everything_kept(self):
+        p = self.pend(*[ev(session=f"s{i}") for i in range(MAX_PENDING + 5)])
+        s = p.summary(NOW)
+        self.assertEqual(s["count"], MAX_PENDING)
+        self.assertEqual(len(s["pending"]), SHOWN_PENDING)
+        self.assertEqual(s["pending"][0]["session"], f"s{MAX_PENDING + 4}")
+        self.assertEqual(set(s["pending"][0]), {"source", "session", "kind", "title", "ts"})
+
+
+class NotifierTests(unittest.TestCase):
+    def setUp(self):
+        self.sent = []
+        self.n = Notifier(lambda t, p, r: self.sent.append((t, json.loads(p), r)), lambda: NOW)
+
+    def test_post_publishes_the_event_then_the_pending_list(self):
+        self.assertEqual(self.n.post(json.dumps(ev()).encode()), {"ok": True, "pending": 1})
+        self.assertEqual([(t, r) for t, _, r in self.sent], [(TOPIC_EVENT, False), (TOPIC_NOTIFY, True)])
+        self.assertEqual(self.sent[0][1]["kind"], "needs_input")
+        self.assertEqual(self.sent[1][1]["pending"][0]["session"], "website")
+
+    def test_bad_post_publishes_nothing(self):
+        with self.assertRaises(EventError):
+            self.n.post(b"{}")
+        self.assertEqual(self.sent, [])
+
+    def test_ack_drops_one_or_all(self):
+        self.n.post(ev())
+        self.n.post(ev(source="codex", session="fix"))
+        self.sent.clear()
+        self.n.ack(b'{"source":"claude","session":"website"}')
+        self.assertEqual(self.sent[-1][1]["count"], 1)
+        self.n.ack(b'{"session":"nothing"}')  # nothing pending for it: no republish
+        self.assertEqual(len(self.sent), 1)
+        self.n.ack(b'{"all":true}')
+        self.assertEqual(self.sent[-1][1]["count"], 0)
+        with self.assertLogs("bridge.notify", level="WARNING"):
+            self.n.ack(b"garbage")  # ignored, no exception
+        self.assertEqual(len(self.sent), 2)
+
+
+class PersistenceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Path(self.tmp.name) / "var" / "pending.json"  # var/ does not exist yet: saving must create it
+        self.published = []
+        self.now = lambda: datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def notifier(self):
+        return Notifier(lambda t, p, r: self.published.append((t, json.loads(p), r)), self.now, store=self.store)
+
+    def test_pending_round_trips_through_the_file_with_its_original_ts(self):
+        first = self.notifier()
+        first.post({"v": 1, "source": "claude", "kind": "needs_input", "session": "website",
+                    "ts": "2026-10-16T11:59:00+00:00"})
+        first.post({"v": 1, "source": "codex", "kind": "done", "session": "api"})
+        saved = json.loads(self.store.read_text())
+        self.assertEqual([e["session"] for e in saved["pending"]], ["api", "website"])
+        self.assertFalse(self.store.with_suffix(".tmp").exists())
+        self.assertEqual(json.loads(self.store.read_text())["pending"], self.published[-1][1]["pending"])
+        self.published.clear()
+        second = self.notifier()
+        summary = second.publish_pending()
+        self.assertEqual((summary["count"], summary["pending"][1]["ts"]), (2, "2026-10-16T11:59:00+00:00"))
+        self.assertEqual(self.published[-1][0], TOPIC_NOTIFY)
+        second.ack(b'{"source": "codex", "session": "api"}')
+        self.assertEqual([e["session"] for e in json.loads(self.store.read_text())["pending"]], ["website"])
+
+    def test_missing_or_corrupt_file_starts_empty_and_odd_entries_are_dropped_with_a_warning(self):
+        with self.assertNoLogs("bridge.notify", level="WARNING"):
+            self.assertEqual(self.notifier().pending()["count"], 0)  # no file: nothing to say
+        self.store.parent.mkdir(parents=True)
+        iso = "2026-10-16T11:00:00+00:00"
+        odd_entries = json.dumps({"v": 1, "pending": [  # newest first, as the bridge writes it
+            {"source": "x"},                                                                  # no session, no kind
+            5,                                                                                # not an object
+            {"source": "claude", "session": "ok", "kind": "done", "title": "", "ts": iso},    # kept
+            {"source": "CLAUDE", "session": "ok", "kind": "error", "title": "", "ts": iso},   # older duplicate
+            {"source": "codex", "session": "a" * 70, "kind": "done", "title": "", "ts": iso}, # kept, session cut
+            {"source": "codex", "session": "gone", "kind": "cleared", "title": "", "ts": iso},  # clears nothing
+            {"source": "codex", "session": "b", "kind": "done", "title": "", "ts": "yesterday"}]})  # bad ts
+        for text, expect in (("not json", []), ("[1, 2]", []), ('{"v": 1, "pending": "nope"}', []),
+                             (odd_entries, [("ok", "done"), ("a" * 64, "done")])):
+            with self.subTest(text=text[:24]):
+                self.store.write_text(text)
+                with self.assertLogs("bridge.notify", level="WARNING") as logs:
+                    kept = self.notifier().pending()["pending"]
+                self.assertEqual([(e["session"], e["kind"]) for e in kept], expect)
+                self.assertEqual(len(logs.output), 1)
+
+    def test_without_a_store_nothing_is_written(self):
+        Notifier(lambda t, p, r: None, self.now).post({"v": 1, "source": "local", "kind": "done", "session": "x"})
+        self.assertFalse(self.store.exists())
+
+
+class EndpointTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.sent = []
+        cls.server = make_server("127.0.0.1", 0, Notifier(lambda t, p, r: cls.sent.append((t, p, r)), lambda: NOW))
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.url = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def call(self, method: str, path: str, body: bytes | None = None):
+        headers = {"Content-Type": "application/json"} if body is not None else {}
+        req = urllib.request.Request(self.url + path, data=body, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            with exc:
+                return exc.code, json.loads(exc.read())
+
+    def test_round_trip(self):
+        self.assertEqual(self.call("POST", "/event", json.dumps(ev()).encode()), (200, {"ok": True, "pending": 1}))
+        status, pending = self.call("GET", "/pending")
+        self.assertEqual((status, pending["count"], pending["pending"][0]["session"]), (200, 1, "website"))
+
+    def test_errors(self):
+        with self.assertLogs("bridge.notify", level="WARNING") as logs:
+            self.assertEqual(self.call("POST", "/event", b"nope")[0], 400)
+            self.assertEqual(self.call("POST", "/event", b"x" * (MAX_BODY + 1))[0], 413)
+        self.assertEqual(len(logs.output), 2)
+        self.assertEqual(self.call("POST", "/elsewhere", b"{}")[0], 404)
+        self.assertEqual(self.call("GET", "/")[0], 404)
+
+    def test_browser_cross_site_post_is_refused(self):
+        req = urllib.request.Request(self.url + "/event", data=json.dumps(ev()).encode(), method="POST",
+                                     headers={"Content-Type": "text/plain", "Origin": "https://example.com"})
+        with self.assertLogs("bridge.notify", level="WARNING"), self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        with cm.exception as exc:
+            self.assertEqual(exc.code, 403)

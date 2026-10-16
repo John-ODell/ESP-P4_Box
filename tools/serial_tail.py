@@ -41,6 +41,13 @@ s.rts = True
 s.open()
 print(f"--- listening on {a.port} @ {a.baud} for {a.seconds:.0f}s ---", flush=True)
 end = time.time() + a.seconds
+def clean(raw: bytes) -> str:
+    # Drop NUL and other control bytes (the ROM spews garbage at the wrong baud
+    # during boot). Keeps the output text-only so greps downstream do not treat
+    # the stream as binary and go silent.
+    txt = raw.decode("utf-8", "replace")
+    return "".join(c for c in txt if c == "\t" or c >= " ")
+
 buf = b""
 while time.time() < end:
     chunk = s.read(4096)
@@ -48,8 +55,8 @@ while time.time() < end:
         buf += chunk
         while b"\n" in buf:
             line, buf = buf.split(b"\n", 1)
-            print(line.decode("utf-8", "replace").rstrip("\r"), flush=True)
+            print(clean(line), flush=True)
 if buf:
-    print(buf.decode("utf-8", "replace"), flush=True)
+    print(clean(buf), flush=True)
 s.close()
 print("--- done ---", flush=True)

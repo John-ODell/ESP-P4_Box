@@ -46,3 +46,16 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
 - A plain app's partition table lives at 0x10000 (IDF default); Brookesia's custom table is at 0x8000. Flashing one over
   the other is fine, `idf.py flash` rewrites bootloader, table, and app.
 - C6 / Wi-Fi findings are in `notes/c6-wifi.md`.
+
+## Update 2026-10-15 late: hello-face (projects/pet) and serial gotchas
+
+- `projects/pet` (BSP 3.0.1 + esp_lvgl_adapter 0.6.3 + LVGL 9.3.0, rev1.x profile) flashed and booted after esptool's
+  RTS reset, no replug. Boot log worth knowing: `st7703: version: 2.0.0`, `Display initialized`, `GT911 found at 0x5D`,
+  `Touch input device registered successfully (IRQ mode: disabled)`, `LVGL task started successfully`.
+- Harmless warnings on every boot: `ledc: GPIO 26 is not usable, maybe conflict with others` (backlight PWM still works),
+  `i2c.master: Please check pull-up resistances`, and `LV_USE_GESTURE_RECOGNITION is disabled` (LVGL's classic
+  indev swipe gestures still fire; the newer multi-touch recogniser is just off).
+- **Serial-reader gotcha:** right after a reset the ROM emits garbage bytes at the console baud, including NULs. Piping
+  that through `grep` makes grep decide the stream is binary and print nothing at all, which looks like a dead board.
+  `tools/serial_tail.py` now strips control bytes; if you pipe raw serial through grep anyway, use `grep -a`.
+- Build sizes: wifi-check 0xa5540 bytes, pet hello-face 0xbcf10 bytes in an 8 MB app partition.

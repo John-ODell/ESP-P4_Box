@@ -32,6 +32,7 @@ from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = ROOT / "var" / "last_state.json"
+PENDING_PATH = ROOT / "var" / "pending.json"  # the sessions still waiting, kept across bridge restarts (#12)
 TOPIC_STATE = "pet/state"
 log = logging.getLogger("bridge")
 
@@ -100,11 +101,12 @@ def publish_state(client: mqtt.Client, state: dict) -> None:
 
 
 def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier:
-    """Session notifications: pet/ack from the box, the local HTTP endpoint, and an empty pending list on start."""
+    """Session notifications: pet/ack from the box, the local HTTP endpoint, and the pending list that survived the
+    last stop (bridge/var/pending.json) published on start."""
     def publish(topic: str, payload: str, retain: bool) -> None:
         client.publish(topic, payload, qos=1, retain=retain)
 
-    notifier = Notifier(publish, lambda: datetime.now(cfg["tz"]))
+    notifier = Notifier(publish, lambda: datetime.now(cfg["tz"]), store=PENDING_PATH)
     try:
         server = make_server(cfg["http_host"], cfg["http_port"], notifier)
     except OSError as exc:
@@ -113,7 +115,7 @@ def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier:
                   cfg["http_host"], cfg["http_port"], exc)
         return notifier
     client.message_callback_add(TOPIC_ACK, lambda c, userdata, msg: notifier.ack(msg.payload))
-    notifier.publish_pending()  # the list lives in memory: after a restart nothing is pending, tell the box so
+    notifier.publish_pending()  # what survived the restart, or the empty list: either way the box hears the truth
     serve_in_thread(server)
     log.info("notify endpoint: POST http://%s:%d/event", cfg["http_host"], cfg["http_port"])
     return notifier

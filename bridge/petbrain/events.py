@@ -117,6 +117,22 @@ class Pending:
         self._items = []
         return changed
 
+    def dump(self) -> list[dict]:
+        """Every entry as a plain dict, newest first: what goes to bridge/var/pending.json."""
+        return [dict(e) for e in self._items]
+
+    def restore(self, entries: list, now: datetime) -> tuple[int, int]:
+        """Rebuild the list from saved entries (newest first, as dumped). Each goes through parse_event and apply,
+        the same checks and caps as a posted event, so a hand-edited file cannot put anything on the box that a POST
+        could not. Returns (kept, given)."""
+        self._items = []
+        for e in reversed(entries):
+            try:
+                self.apply(parse_event(e, now))
+            except EventError:
+                continue
+        return len(self._items), len(entries)
+
     def summary(self, now: datetime) -> dict:
         """The retained pet/notify message: small, newest first, self-describing."""
         return {

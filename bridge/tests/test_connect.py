@@ -21,8 +21,11 @@ class Home(unittest.TestCase):
 
     def setUp(self):
         real = connect.bridge_state
-        connect.bridge_state = lambda: "stubbed"  # no test talks to a bridge that happens to run on this Mac
+        connect.bridge_state = lambda *_: "stubbed"  # no test talks to a bridge that happens to run on this Mac
         self.addCleanup(setattr, connect, "bridge_state", real)
+        probe = connect.probe
+        connect.probe = lambda *_, **__: "stubbed"
+        self.addCleanup(setattr, connect, "probe", probe)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name)

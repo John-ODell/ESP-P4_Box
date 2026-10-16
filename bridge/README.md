@@ -166,15 +166,27 @@ The bridge then also listens on this Mac's own Tailscale address, which it finds
   and a log line. Tailscale encrypts the traffic between machines.
 - The loopback endpoint is unchanged, so hooks on this Mac need no token.
 
-On another machine, the hooks and `notify.py` read the address and token from `PET_NOTIFY_URL` and
-`PET_NOTIFY_TOKEN`, or from `~/.config/desk-pet/bridge.json`:
+Then, on this Mac, restart the bridge and run:
 
-```json
-{"url": "http://johns-macbook-pro.<tailnet>.ts.net:8765/event", "token": "<the token>"}
+```bash
+python3 bridge/connect.py --share
 ```
 
-Keep that file private (`chmod 600`). Writing it and the setup are being folded into `connect.py` (#38) and a
-first-time setup command (#40). The box itself keeps using this Mac's broker on the home Wi-Fi: the ESP32 cannot
+It checks the bridge answers on its Tailscale name and prints one line to paste on each of your other machines (same
+Tailscale account, this repo cloned there):
+
+```bash
+python3 bridge/connect.py --bridge http://johns-macbook-pro.<tailnet>.ts.net:8765/event --token <the token>
+python3 bridge/connect.py      # then connect that machine's AI tools as usual
+```
+
+`--bridge` writes `~/.config/desk-pet/bridge.json` owner-only (0600, in a 0700 folder), shows the change with the
+token hidden, keeps a private backup, and says whether the bridge accepts that token. Every hook and `notify.py`
+reads it from then on; `PET_NOTIFY_URL` and `PET_NOTIFY_TOKEN` still win if set. `connect.py --disconnect bridge`
+puts that machine back on its own bridge. Treat the token like a password: paste it only on your own machines. A
+first-time setup command that does all of this for you is coming in #40.
+
+The box itself keeps using this Mac's broker on the home Wi-Fi: the ESP32 cannot
 run Tailscale.
 
 ## Known limits

@@ -15,6 +15,8 @@ answering, then asks which to connect (picking a connected one offers to disconn
 diff, asks, copies the file to `<file>.pet-backup-<date>-<time>`, writes it, and reads it back. A second run changes
 nothing. `--status` prints the table only; `--connect claude codex --yes` and `--disconnect codex` skip the menu;
 `--repo PATH` points the hooks at another checkout, so run it from the checkout the bridge uses.
+On a machine that posts to the home Mac over Tailscale, `--bridge URL --token TOKEN` (printed by `--share` on
+the Mac) sets where the hooks post; see "From your other machines" in `../README.md`.
 
 - Claude Code: the three hook groups of `claude-settings.json` are merged into `~/.claude/settings.json`. Other keys
   and other hooks are kept; disconnecting removes only the hook entries that run `claude_hook.py`.

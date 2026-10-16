@@ -138,3 +138,65 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
 - Cost: free internal RAM settles at about 142 KB with the pools internal (the `alive` log line now prints it next to
   the total); PSRAM free is unchanged at about 29 MB. Boot timing unchanged: IP 8.6 s, MQTT 8.65 s, retained state
   drawn 8.67 s after reset.
+
+## 2026-10-15 22:00: "it turns on then off" was the clock-based backlight schedule, now an idle timer
+
+- John's words: "if I unplug it it boots up, connects to wifi, then it goes black", "that's really fast off of the
+  boot, it looks like it shut down on itself so I pressed reset". Timeline: the box boots at full brightness, SNTP
+  syncs the clock about 12 s later, the old schedule sees 21:00+ and drops the backlight to 25% in one step (4% after
+  23:00). The hard step to a dark level reads as a crash. Not a reboot: the fixed firmware had been up since 21:49:53
+  with his taps in the log, and `Setting LCD backlight: 25%` appeared 60 s after each tap.
+- Replaced by John's spec, an idle timer: full after boot, after any touch and whenever the state changes; dim after
+  30 s without a touch (75% of full); off after 10 min; anything waiting for a tap holds full brightness; at night
+  (23:00-07:00) the dim is 40% and the off timer 3 min, with the sleeping face while idle. Levels glide through the
+  LEDC hardware fade on the BSP's channel (`CONFIG_BSP_DISPLAY_BRIGHTNESS_LEDC_CH`, 10-bit at 5 kHz). Everything is
+  in `projects/pet/main/pet_config.h`; each change is logged by `sched`.
+- Also added: `esp_reset_reason()` at boot and in every alive line (esptool's RTS reset shows as `power-on`), and the
+  touch wake fires on finger-down. Unexplained and now attributable next time: Mosquitto saw the box silent from
+  21:22:58 to 21:49:52 and two boots around 21:49:35 and 21:49:53 (John pressed reset at least once).
+- Odd one: a 90 s capture at 21:52 contained one garbled burst where an alive line should have been, while captures a
+  minute later were clean at the same 115200 baud. Not understood; watch for it.
+
+## 2026-10-16 afternoon: backlight off step and touch wake confirmed on the UART (#3)
+
+Firmware: the #1 idle-timer build (main at ae89721; no log line carries a build ID), box on the CH343P UART port,
+read with `tools/serial_tail.py` only, which never toggles DTR/RTS. The only reset was the cable plug-in, which every
+alive line reports as `reset power-on`. Three separate tail sessions over one boot: uptime runs on continuously from
+one to the next, and the tap count never changes across the gaps between them.
+
+- **Off after ten idle minutes, after a power-on.** First tail session, started about 4:20 pm CDT, right after the
+  plug-in:
+
+  ```
+  I (32100) sched: backlight 60% -> 45% (idle 30 s, dim)
+  I (602499) sched: backlight 45% -> 0% (idle 600 s, off)
+  ```
+
+  No touch in between (`taps 0` in every alive line from 68607 to 548615 ms), Wi-Fi and MQTT up throughout. A bridge
+  `pet/state` at about 4:25 pm did not wake the screen, so none of `xp`, `today.total` or `events` had changed
+  (`projects/pet/main/main.c:140`). This off step was later ended by a `pet/state` wake at 932613 ms, not by a touch.
+- **A touch from off brings it back.** Same boot, third tail session, about 5:16 pm CDT. The last touch before the off
+  was tap #6 at 2782913 ms, 600249 ms earlier; the alive line in between still says `taps 6`:
+
+  ```
+  I (3383162) sched: backlight 45% -> 0% (idle 600 s, off)
+  I (3428709) pet: alive: wifi up, mqtt up, state 2026-10-16T17:15:43-05:00, taps 6, ...
+  I (3453862) sched: backlight 0% -> 60% (active)
+  I (3453862) pet: touch down  x=419 y=500
+  I (3453952) pet: touch up    x=419 y=500
+  I (3453952) pet: tap #7      x=419 y=500
+  ```
+
+  The wake fires on finger-down (`LV_EVENT_PRESSED`), as designed. Strictly, issue #3 asked for the off and the touch
+  wake in one capture after a power-on; they are in one boot after a power-on, in two tail sessions.
+- **Why it took three tries: the bridge poll and the off timer line up.** The bridge polls GitHub every 10 minutes and
+  the off timer is 10 minutes. On a day with ongoing GitHub activity, each poll changes the state, which wakes the box
+  and restarts the timer, so the next off lands within a second or so of the next poll and the screen is dark only
+  for that moment. Seen at about 4:45 pm: off at 1533354 ms, `pet/state` at 1534403 ms, `activity: pet state changed`
+  at 1534406 ms, backlight back on at 1534409 ms. Taps break the rhythm; otherwise a busy day keeps the box lit.
+  Tracked in #29.
+- **The native USB-C port carries no log on this firmware.** With the cable in the other port the box enumerates as
+  Espressif `ESP32_P4` (VID 0x303a) at `/dev/cu.usbmodem214301`, but 100 s of listening there produced nothing,
+  although the local `projects/pet/sdkconfig` has `CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y` (that file is
+  untracked, so it may differ from the flashed build). Use the UART port (`/dev/cu.usbmodem5B610404781`,
+  "USB Single Serial") for logs and flashing.

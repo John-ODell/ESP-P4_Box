@@ -3,6 +3,7 @@
 #include "face.h"
 #include "anim.h"
 #include "pet_config.h"
+#include "sched.h"
 #include "esp_log.h"
 
 #define BG_COLOR     lv_color_hex(0x0b0f14)
@@ -201,6 +202,7 @@ void face_apply_state(const pet_state_t *s, bool celebrate)
             ESP_LOGI(TAG, "level up -> celebrate until tap");
             banner("LEVEL UP!  tap to continue", GOOD_COLOR, true);
             anim_play(PET_ANIM_CELEBRATE, true);
+            sched_hold(true); /* keep the screen on until the tap */
         } else {
             ESP_LOGI(TAG, "%s -> celebrate", (s->events & PET_EVENT_BIG_DAY) ? "big day" : "goal hit");
             banner((s->events & PET_EVENT_BIG_DAY) ? "BIG DAY!" : "daily goal hit", GOOD_COLOR, false);
@@ -260,4 +262,5 @@ void face_ack(void)
     if (anim_ack()) {
         ESP_LOGI(TAG, "reaction acknowledged");
     }
+    sched_hold(false);
 }

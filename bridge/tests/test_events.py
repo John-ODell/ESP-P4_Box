@@ -1,9 +1,11 @@
 import json
+import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 from petbrain.events import EventError, Pending, parse_event, MAX_BODY, MAX_PENDING, MAX_TITLE, SHOWN_PENDING
 from petbrain.notify_api import Notifier, make_server, TOPIC_EVENT, TOPIC_NOTIFY
@@ -118,6 +120,55 @@ class NotifierTests(unittest.TestCase):
         with self.assertLogs("bridge.notify", level="WARNING"):
             self.n.ack(b"garbage")  # ignored, no exception
         self.assertEqual(len(self.sent), 2)
+
+
+class PersistenceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Path(self.tmp.name) / "var" / "pending.json"  # var/ does not exist yet: saving must create it
+        self.published = []
+        self.now = lambda: datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def notifier(self):
+        return Notifier(lambda t, p, r: self.published.append((t, json.loads(p), r)), self.now, store=self.store)
+
+    def test_pending_round_trips_through_the_file_with_its_original_ts(self):
+        first = self.notifier()
+        first.post({"v": 1, "source": "claude", "kind": "needs_input", "session": "website",
+                    "ts": "2026-10-16T11:59:00+00:00"})
+        first.post({"v": 1, "source": "codex", "kind": "done", "session": "api"})
+        saved = json.loads(self.store.read_text())
+        self.assertEqual([e["session"] for e in saved["pending"]], ["api", "website"])
+        self.assertFalse(self.store.with_suffix(".tmp").exists())
+        self.published.clear()
+        second = self.notifier()
+        summary = second.publish_pending()
+        self.assertEqual((summary["count"], summary["pending"][1]["ts"]), (2, "2026-10-16T11:59:00+00:00"))
+        self.assertEqual(self.published[-1][0], TOPIC_NOTIFY)
+        second.ack(b'{"source": "codex", "session": "api"}')
+        self.assertEqual([e["session"] for e in json.loads(self.store.read_text())["pending"]], ["website"])
+
+    def test_missing_or_corrupt_file_starts_empty(self):
+        self.assertEqual(self.notifier().pending()["count"], 0)
+        self.store.parent.mkdir(parents=True)
+        odd_entries = json.dumps({"v": 1, "pending": [
+            {"source": "x"}, 5,
+            {"source": "claude", "session": "ok", "kind": "cleared", "title": "", "ts": "t"},
+            {"source": "claude", "session": "ok", "kind": "done", "title": "", "ts": "t"},
+            {"source": "claude", "session": "ok", "kind": "error", "title": "", "ts": "t2"}]})
+        for text, expect in (("not json", []), ("[1, 2]", []), ('{"v": 1, "pending": "nope"}', []),
+                             (odd_entries, [("ok", "done")])):
+            with self.subTest(text=text[:24]):
+                self.store.write_text(text)
+                kept = self.notifier().pending()["pending"]
+                self.assertEqual([(e["session"], e["kind"]) for e in kept], expect)
+
+    def test_without_a_store_nothing_is_written(self):
+        Notifier(lambda t, p, r: None, self.now).post({"v": 1, "source": "local", "kind": "done", "session": "x"})
+        self.assertFalse(self.store.exists())
 
 
 class EndpointTests(unittest.TestCase):

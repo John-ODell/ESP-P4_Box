@@ -6,8 +6,9 @@
     GET  /pending   the current pending list, the same object that is retained on pet/notify
 
 Notifier keeps the Pending list, publishes each accepted event on pet/event (not retained) and the pending list on
-pet/notify (retained), and drops entries when the box acknowledges on pet/ack. The publish function is injected, so
-the tests run without a broker.
+pet/notify (retained), and drops entries when the box acknowledges on pet/ack. With a `store` path it also writes
+the list to that file whenever it publishes it and reads it back on start, so a bridge restart does not lose the
+sessions that were waiting. The publish function is injected, so the tests run without a broker.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import logging
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Callable
 
 from .events import MAX_BODY, EventError, Pending, parse_event
@@ -29,11 +31,39 @@ Publish = Callable[[str, str, bool], None]  # topic, payload, retain
 
 
 class Notifier:
-    def __init__(self, publish: Publish, now: Callable[[], datetime]) -> None:
+    def __init__(self, publish: Publish, now: Callable[[], datetime], store: Path | None = None) -> None:
         self._publish = publish
         self._now = now
         self._pending = Pending()
         self._lock = threading.Lock()
+        self._store = store
+        if store is not None:
+            self._load()
+
+    def _load(self) -> None:
+        """What was waiting when the last bridge stopped. Missing: empty. Unreadable or odd: empty, with a warning."""
+        try:
+            raw = json.loads(self._store.read_text())
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as exc:
+            log.warning("pending list in %s not readable (%s); starting empty", self._store, exc)
+            return
+        kept = self._pending.restore(raw.get("pending") if isinstance(raw, dict) else None)
+        if kept:
+            log.info("pending list restored from %s: %d waiting", self._store, kept)
+
+    def _save(self) -> None:
+        """Called under the lock, right after a publish, so the file always holds what is on pet/notify."""
+        if self._store is None:
+            return
+        try:
+            self._store.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._store.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"v": 1, "pending": self._pending.dump()}))
+            tmp.replace(self._store)  # atomic: a crash mid-write leaves the old file, not half a new one
+        except OSError as exc:
+            log.warning("pending list not saved to %s: %s", self._store, exc)
 
     def post(self, body) -> dict:
         """Handle one POST /event body. Raises EventError when the event is not usable."""
@@ -73,6 +103,7 @@ class Notifier:
     def _publish_pending(self) -> dict:
         summary = self._pending.summary(self._now())
         self._publish(TOPIC_NOTIFY, json.dumps(summary, separators=(",", ":")), True)
+        self._save()
         return summary
 
 

@@ -1,6 +1,8 @@
 /* Milestone 5: sprite character with mood-weighted idle animations and reactions, stats swipe, clock,
- * backlight idle timer, on top of the milestone 4 Wi-Fi + MQTT plumbing. */
+ * backlight idle timer, on top of the milestone 4 Wi-Fi + MQTT plumbing. Milestone 6: the AI sessions waiting for
+ * a person (the bridge's retained pet/notify list) show as a bubble and a source tint; a tap acknowledges. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,6 +17,7 @@
 #include "net.h"
 #include "mqtt_link.h"
 #include "pet_state.h"
+#include "pet_notify.h"
 #include "sched.h"
 #include "pet_config.h"
 
@@ -22,6 +25,7 @@ static const char *TAG = "pet";
 static int s_taps;
 static bool s_wifi_up, s_mqtt_up;
 static pet_state_t s_state;
+static pet_notify_t s_notify;  /* the waiting sessions, newest first; touched only with the display lock held */
 static bool s_swallow_click;   /* LVGL fires CLICKED after a gesture or long press; ignore that one */
 
 static const char *gesture_name(lv_dir_t d)
@@ -33,6 +37,39 @@ static const char *gesture_name(lv_dir_t d)
     case LV_DIR_BOTTOM: return "down";
     default: return "none";
     }
+}
+
+/* Display lock held: draw the newest waiting session, or nothing. */
+static void show_notify(bool announce)
+{
+    if (s_notify.n > 0) {
+        face_set_notice(&s_notify.items[0], s_notify.count, announce);
+    } else {
+        face_clear_notice();
+    }
+}
+
+/* LVGL task, lock held: a tap acknowledges the session shown. The bridge drops it and republishes the list; the box
+ * drops it locally too, so the bubble moves on even while the bridge is down. */
+static void notice_tap(void)
+{
+    if (s_notify.n == 0) {
+        return;
+    }
+    pet_notice_t top = s_notify.items[0];
+    char *json = pet_notify_ack_json(top.source, top.session);
+    bool queued = json && mqtt_link_publish(PET_TOPIC_ACK, json);
+    free(json);
+    ESP_LOGI(TAG, "ack %s/%s%s", top.source, top.session, queued ? "" : " (not sent)");
+    memmove(&s_notify.items[0], &s_notify.items[1], (size_t)(s_notify.n - 1) * sizeof(pet_notice_t));
+    s_notify.n--;
+    if (s_notify.count > 0) {
+        s_notify.count--;
+    }
+    if (s_notify.count < s_notify.n) {
+        s_notify.count = s_notify.n;
+    }
+    show_notify(false);
 }
 
 /* Called from the LVGL task; the lock is already held. */
@@ -63,6 +100,7 @@ static void touch_event_cb(lv_event_t *e)
         ESP_LOGI(TAG, "tap #%d      x=%d y=%d", s_taps, (int)p.x, (int)p.y);
         snprintf(buf, sizeof(buf), "tap %d at %d,%d", s_taps, (int)p.x, (int)p.y);
         face_set_status(buf);
+        notice_tap();
         face_ack();
         break;
     case LV_EVENT_LONG_PRESSED:
@@ -130,6 +168,33 @@ static void on_mqtt_status(bool connected)
     refresh_link_line();
 }
 
+static void on_notify(const char *payload, size_t len, bool retained)
+{
+    static pet_notify_t nf; /* 1.8 KB: not on the MQTT task's stack; this handler runs in that one task only */
+    if (!pet_notify_parse(payload, len, &nf)) {
+        return;
+    }
+    if (!bsp_display_lock(500)) {
+        ESP_LOGW(TAG, "could not take the display lock; notify list not drawn");
+        return;
+    }
+    /* News is a newest entry later than the one shown. A retained message is a replay (boot, reconnect): show it
+     * and hold the screen, but do not play the reaction again. */
+    bool news = !retained && nf.n > 0 && (s_notify.n == 0 || strcmp(nf.items[0].ts, s_notify.items[0].ts) > 0);
+    s_notify = nf;
+    if (nf.n > 0) {
+        ESP_LOGI(TAG, "notify: %d pending, newest %s/%s %s%s", nf.count, nf.items[0].source, nf.items[0].session,
+                 nf.items[0].kind, retained ? " (retained)" : "");
+    } else {
+        ESP_LOGI(TAG, "notify: nothing pending%s", retained ? " (retained)" : "");
+    }
+    show_notify(news);
+    if (news) {
+        sched_activity("session notification");
+    }
+    bsp_display_unlock();
+}
+
 static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool retained)
 {
     if (strcmp(topic, PET_TOPIC_STATE) == 0) {
@@ -153,8 +218,10 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
         } else {
             ESP_LOGW(TAG, "could not take the display lock; state not drawn");
         }
+    } else if (strcmp(topic, PET_TOPIC_NOTIFY) == 0) {
+        on_notify(payload, len, retained);
     } else if (strcmp(topic, PET_TOPIC_EVENT) == 0) {
-        /* Session notifications arrive here in milestone 6. */
+        /* Each accepted event, for the UART; the screen follows the retained pet/notify list instead. */
         ESP_LOGI(TAG, "event: %.*s", (int)len, payload);
     }
 }
@@ -194,8 +261,9 @@ void app_main(void)
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(60000));
-        ESP_LOGI(TAG, "alive: wifi %s, mqtt %s, state %s, taps %d, free heap %u (internal %u), reset %s", s_wifi_up ? "up" : "down",
-                 s_mqtt_up ? "up" : "down", s_state.valid ? s_state.ts : "none", s_taps,
+        ESP_LOGI(TAG, "alive: wifi %s, mqtt %s, state %s, pending %d, taps %d, free heap %u (internal %u), reset %s",
+                 s_wifi_up ? "up" : "down", s_mqtt_up ? "up" : "down", s_state.valid ? s_state.ts : "none",
+                 s_notify.count, s_taps,
                  (unsigned)esp_get_free_heap_size(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                  reset_reason_name());
     }

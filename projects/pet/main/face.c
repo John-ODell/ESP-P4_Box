@@ -1,5 +1,7 @@
-/* The face scene: the sprite character in the middle, the numbers around the edge, a stats overlay on swipe. */
+/* The face scene: the sprite character in the middle, the numbers around the edge, a stats overlay on swipe, and
+ * the speech bubble plus source tint while an AI session waits. */
 #include <stdio.h>
+#include <string.h>
 #include "face.h"
 #include "anim.h"
 #include "pet_config.h"
@@ -20,6 +22,11 @@ static lv_obj_t *s_level, *s_xp_bar, *s_xp_text, *s_streak, *s_clock, *s_today, 
 static lv_obj_t *s_stats, *s_stats_body, *s_stats_bar;
 static lv_timer_t *s_banner_timer, *s_stats_timer;
 static pet_state_t s_last;
+static lv_obj_t *s_bubble, *s_bubble_who, *s_bubble_what, *s_bubble_title;
+static bool s_banner_sticky;   /* the level-up banner waits for a tap */
+static bool s_notice_on;       /* an AI session waits: bubble up, character tinted */
+static lv_color_t s_notice_color;
+static bool s_sleeping;
 
 static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, lv_color_t color, lv_align_t align, int x, int y)
 {
@@ -55,11 +62,35 @@ static void show(lv_obj_t *o, bool on)
     }
 }
 
+/* The character's colour: the waiting AI's colour wins, then the sleep tint, then plain ink. */
+static void apply_ink(void)
+{
+    anim_set_ink(s_notice_on ? s_notice_color : (s_sleeping ? SLEEP_INK : INK_COLOR));
+}
+
+/* The backlight stays at full while anything on screen waits for a tap. */
+static void apply_hold(void)
+{
+    sched_hold(s_banner_sticky || s_notice_on);
+}
+
 static void banner_timeout(lv_timer_t *t)
 {
     show(s_banner, false);
     s_banner_timer = NULL;
     lv_timer_delete(t);
+}
+
+static lv_obj_t *bubble_line(lv_obj_t *parent, const lv_font_t *font, lv_color_t color, int lines)
+{
+    lv_obj_t *l = lv_label_create(parent);
+    lv_label_set_text(l, "");
+    lv_obj_set_style_text_color(l, color, 0);
+    lv_obj_set_style_text_font(l, font, 0);
+    lv_obj_set_size(l, PET_BUBBLE_W - 2 * 18 - 2 * 3, lines * (lv_font_get_line_height(font) + 2));
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT); /* a fixed box, so a long name ends in dots instead of growing */
+    lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
+    return l;
 }
 
 static void stats_timeout(lv_timer_t *t)
@@ -74,6 +105,7 @@ static void banner(const char *text, lv_color_t color, bool sticky)
     lv_label_set_text(s_banner, text);
     lv_obj_set_style_text_color(s_banner, color, 0);
     show(s_banner, true);
+    s_banner_sticky = sticky;
     if (s_banner_timer) {
         lv_timer_delete(s_banner_timer);
         s_banner_timer = NULL;
@@ -110,6 +142,27 @@ void face_create(lv_obj_t *parent)
 
     s_banner = label(parent, &lv_font_montserrat_32, GOOD_COLOR, LV_ALIGN_TOP_MID, 0, 130);
     show(s_banner, false);
+
+    /* Speech bubble, top right over the character's shoulder, hidden until an AI session waits. Created before the
+     * stats overlay so the overlay draws above it. */
+    s_bubble = lv_obj_create(parent);
+    lv_obj_remove_style_all(s_bubble);
+    lv_obj_set_width(s_bubble, PET_BUBBLE_W);
+    lv_obj_set_height(s_bubble, LV_SIZE_CONTENT);
+    lv_obj_align(s_bubble, LV_ALIGN_TOP_RIGHT, -20, 104);
+    lv_obj_set_style_bg_color(s_bubble, PANEL_COLOR, 0);
+    lv_obj_set_style_bg_opa(s_bubble, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_bubble, 24, 0);
+    lv_obj_set_style_border_width(s_bubble, 3, 0);
+    lv_obj_set_style_border_color(s_bubble, ACCENT_COLOR, 0);
+    lv_obj_set_style_pad_all(s_bubble, 18, 0);
+    lv_obj_set_style_pad_row(s_bubble, 6, 0);
+    lv_obj_set_flex_flow(s_bubble, LV_FLEX_FLOW_COLUMN);
+    lv_obj_remove_flag(s_bubble, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    s_bubble_who = bubble_line(s_bubble, &lv_font_montserrat_24, ACCENT_COLOR, 1);
+    s_bubble_what = bubble_line(s_bubble, &lv_font_montserrat_24, INK_COLOR, 1);
+    s_bubble_title = bubble_line(s_bubble, &lv_font_montserrat_16, DIM_COLOR, 2);
+    show(s_bubble, false);
 
     /* Stats overlay, hidden until a swipe. */
     s_stats = lv_obj_create(parent);
@@ -202,7 +255,7 @@ void face_apply_state(const pet_state_t *s, bool celebrate)
             ESP_LOGI(TAG, "level up -> celebrate until tap");
             banner("LEVEL UP!  tap to continue", GOOD_COLOR, true);
             anim_play(PET_ANIM_CELEBRATE, true);
-            sched_hold(true); /* keep the screen on until the tap */
+            apply_hold(); /* keep the screen on until the tap */
         } else {
             ESP_LOGI(TAG, "%s -> celebrate", (s->events & PET_EVENT_BIG_DAY) ? "big day" : "goal hit");
             banner((s->events & PET_EVENT_BIG_DAY) ? "BIG DAY!" : "daily goal hit", GOOD_COLOR, false);
@@ -228,7 +281,8 @@ void face_set_clock(const char *hhmm)
 
 void face_set_sleeping(bool sleeping)
 {
-    anim_set_ink(sleeping ? SLEEP_INK : INK_COLOR);
+    s_sleeping = sleeping;
+    apply_ink();
     anim_set_sleeping(sleeping);
 }
 
@@ -252,6 +306,7 @@ void face_ack(void)
         s_banner_timer = NULL;
     }
     show(s_banner, false);
+    s_banner_sticky = false;
     if (!lv_obj_has_flag(s_stats, LV_OBJ_FLAG_HIDDEN)) {
         if (s_stats_timer) {
             lv_timer_delete(s_stats_timer);
@@ -262,5 +317,65 @@ void face_ack(void)
     if (anim_ack()) {
         ESP_LOGI(TAG, "reaction acknowledged");
     }
-    sched_hold(false);
+    apply_hold();
+}
+
+static lv_color_t source_color(const char *source)
+{
+    if (!strcmp(source, "claude")) {
+        return lv_color_hex(PET_COLOR_CLAUDE);
+    }
+    if (!strcmp(source, "codex")) {
+        return lv_color_hex(PET_COLOR_CODEX);
+    }
+    if (!strcmp(source, "local")) {
+        return lv_color_hex(PET_COLOR_LOCAL);
+    }
+    return lv_color_hex(PET_COLOR_OTHER);
+}
+
+static const char *kind_text(const char *kind)
+{
+    if (!strcmp(kind, "needs_input")) {
+        return "needs your input";
+    }
+    if (!strcmp(kind, "done")) {
+        return "finished";
+    }
+    if (!strcmp(kind, "error")) {
+        return "hit an error";
+    }
+    return kind[0] ? kind : "is waiting";
+}
+
+void face_set_notice(const pet_notice_t *n, int count, bool announce)
+{
+    (void)count; /* #7 adds the counter and cycling; until then the newest session is the one shown */
+    s_notice_on = true;
+    s_notice_color = source_color(n->source);
+    lv_label_set_text(s_bubble_who, n->session);
+    lv_obj_set_style_text_color(s_bubble_who, s_notice_color, 0);
+    lv_label_set_text_fmt(s_bubble_what, "%s %s", n->source, kind_text(n->kind));
+    lv_obj_set_style_text_color(s_bubble_what, strcmp(n->kind, "error") == 0 ? WARN_COLOR : INK_COLOR, 0);
+    lv_label_set_text(s_bubble_title, n->title);
+    show(s_bubble_title, n->title[0] != '\0');
+    lv_obj_set_style_border_color(s_bubble, s_notice_color, 0);
+    show(s_bubble, true);
+    apply_ink();
+    if (announce) {
+        ESP_LOGI(TAG, "notice: %s %s %s", n->source, n->session, n->kind);
+        anim_play(PET_ANIM_NOTICE, false);
+    }
+    apply_hold();
+}
+
+void face_clear_notice(void)
+{
+    if (s_notice_on) {
+        ESP_LOGI(TAG, "no session waiting");
+    }
+    s_notice_on = false;
+    show(s_bubble, false);
+    apply_ink();
+    apply_hold();
 }

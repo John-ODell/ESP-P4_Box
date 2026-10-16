@@ -25,3 +25,12 @@
 
 #define PET_BANNER_MS       4000     /* goal / big-day banner auto-hide */
 #define PET_STATS_MS        12000    /* stats overlay auto-hide */
+
+/* Session notifications (milestone 6): while an AI session waits for a person, the character takes that source's
+ * colour and a bubble names the session. Sources are what the senders in bridge/hooks/ and bridge/notify.py put in
+ * `source`; anything else gets PET_COLOR_OTHER. */
+#define PET_COLOR_CLAUDE    0xD97757 /* Anthropic clay */
+#define PET_COLOR_CODEX     0x10A37F /* OpenAI green */
+#define PET_COLOR_LOCAL     0xB794F4 /* local models and scripts: violet */
+#define PET_COLOR_OTHER     0x9AA5B1 /* any other source: grey */
+#define PET_BUBBLE_W        400      /* speech bubble width; it sits top right, over the character's shoulder */

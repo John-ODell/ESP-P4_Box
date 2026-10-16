@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -59,11 +60,24 @@ def save_prev(state: dict) -> None:
 
 
 def connect(cfg: dict) -> mqtt.Client:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="pet-bridge")
+    """Connect and wait for the broker's CONNACK; publishing before it is silently refused by paho."""
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"pet-bridge-{os.getpid()}")
     if cfg["user"]:
         client.username_pw_set(cfg["user"], cfg["password"])
+    ready = threading.Event()
+    result = {}
+
+    def on_connect(c, userdata, flags, reason_code, properties):
+        result["rc"] = reason_code
+        ready.set()
+
+    client.on_connect = on_connect
     client.connect(cfg["host"], cfg["port"], keepalive=60)
     client.loop_start()
+    if not ready.wait(10):
+        raise RuntimeError(f"no CONNACK from {cfg['host']}:{cfg['port']} within 10 s")
+    if result["rc"].is_failure:
+        raise RuntimeError(f"broker refused connection: {result['rc']}")
     return client
 
 

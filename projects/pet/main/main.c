@@ -1,4 +1,5 @@
-/* Milestone 4: BSP face + Wi-Fi via the C6 + MQTT subscription to the bridge's pet/state. */
+/* Milestone 5: sprite character with mood-weighted idle animations and reactions, stats swipe, clock,
+ * backlight schedule, on top of the milestone 4 Wi-Fi + MQTT plumbing. */
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -13,11 +14,13 @@
 #include "net.h"
 #include "mqtt_link.h"
 #include "pet_state.h"
+#include "sched.h"
 
 static const char *TAG = "pet";
 static int s_taps;
 static bool s_wifi_up, s_mqtt_up;
 static pet_state_t s_state;
+static bool s_swallow_click;   /* LVGL fires CLICKED after a gesture or long press; ignore that one */
 
 static const char *gesture_name(lv_dir_t d)
 {
@@ -48,6 +51,11 @@ static void touch_event_cb(lv_event_t *e)
         ESP_LOGI(TAG, "touch up    x=%d y=%d", (int)p.x, (int)p.y);
         break;
     case LV_EVENT_CLICKED:
+        sched_touch();
+        if (s_swallow_click) {
+            s_swallow_click = false;
+            break;
+        }
         s_taps++;
         ESP_LOGI(TAG, "tap #%d      x=%d y=%d", s_taps, (int)p.x, (int)p.y);
         snprintf(buf, sizeof(buf), "tap %d at %d,%d", s_taps, (int)p.x, (int)p.y);
@@ -55,14 +63,17 @@ static void touch_event_cb(lv_event_t *e)
         face_ack();
         break;
     case LV_EVENT_LONG_PRESSED:
-        ESP_LOGI(TAG, "long press  x=%d y=%d", (int)p.x, (int)p.y);
-        face_set_status("long press");
+        s_swallow_click = true;
+        sched_touch();
+        ESP_LOGI(TAG, "long press  x=%d y=%d (settings come later)", (int)p.x, (int)p.y);
+        face_set_status("long press: settings come in a later milestone");
         break;
     case LV_EVENT_GESTURE: {
+        s_swallow_click = true;
+        sched_touch();
         lv_dir_t d = lv_indev_get_gesture_dir(indev);
-        ESP_LOGI(TAG, "swipe %s", gesture_name(d));
-        snprintf(buf, sizeof(buf), "swipe %s", gesture_name(d));
-        face_set_status(buf);
+        ESP_LOGI(TAG, "swipe %s -> stats", gesture_name(d));
+        face_toggle_stats();
         break;
     }
     default:
@@ -82,6 +93,9 @@ static void refresh_link_line(void)
 static void on_net(net_status_t st, const char *detail)
 {
     s_wifi_up = (st == NET_STATUS_GOT_IP);
+    if (s_wifi_up) {
+        sched_network_up();
+    }
     refresh_link_line();
 }
 
@@ -138,6 +152,7 @@ void app_main(void)
     face_create(scr);
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr, touch_event_cb, LV_EVENT_ALL, NULL);
+    sched_start();
     bsp_display_unlock();
     ESP_LOGI(TAG, "face ready");
 
@@ -149,8 +164,8 @@ void app_main(void)
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(60000));
-        ESP_LOGI(TAG, "alive: wifi %s, mqtt %s, state %s, taps %d, free heap %u", s_wifi_up ? "up" : "down",
+        ESP_LOGI(TAG, "alive: wifi %s, mqtt %s, state %s, taps %d, free heap %u (internal %u)", s_wifi_up ? "up" : "down",
                  s_mqtt_up ? "up" : "down", s_state.valid ? s_state.ts : "none", s_taps,
-                 (unsigned)esp_get_free_heap_size());
+                 (unsigned)esp_get_free_heap_size(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     }
 }

@@ -78,3 +78,63 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
   `allow_anonymous false` and a password file both the box and the bridge log in as `pet`. The macOS application
   firewall was off on this Mac, so no prompt appeared; if it is on, allow `mosquitto` when asked.
 - App size with Wi-Fi and MQTT: 0x17c140 bytes, 81% of the 8 MB partition free.
+
+## 2026-10-15 late: milestone 5 asset pipeline decisions
+
+- Character frames are 48x40 one-bit sprites emitted by `tools/gen_sprites.py` as LVGL **A8** images (alpha mask,
+  1 byte/pixel, 1.9 KB per frame) and drawn by one `lv_image` with `lv_image_set_scale(256 * 12)`,
+  `lv_image_set_antialias(false)` (nearest neighbour, crisp 12x12 blocks) and `image_recolor` for the ink colour. LVGL
+  9.3's software renderer supports transformed A8 (`transform_a8` in `lv_draw_sw_transform.c`), confirmed in the
+  managed component before committing to the format. Pre-scaled RGB frames were rejected: 576x480 per frame would be
+  0.5 to 1 MB each.
+- 36 unique frames / 28 animations / 68 KiB of flash after de-duplicating identical compositions.
+- Time: `esp_netif_sntp` against pool.ntp.org once an IP arrives, POSIX TZ string in `main/pet_config.h`.
+
+## 2026-10-15 20:50: the box had been rebooting every 288 s since milestone 4 (root cause and fix)
+
+- **Symptom.** Mosquitto logged a new `pet-box` connection every 288 ± 1 s from 20:01 (milestone 4 firmware) to
+  20:45 (milestone 5), idle or busy. Nobody noticed because every check so far was shorter than five minutes. The UART
+  (`tools/serial_tail.py`) showed the same four lines in every boot at an uptime of 287.6 to 288.2 s, followed by a
+  software reset, about 17 s of blank screen, and the retained state coming back:
+  ```
+  E (287600) H_SDIO_DRV: sdio_write_task: 0: Failed to send data: 258 68 68
+  E (287600) H_SDIO_DRV: sdio_write_task: 1: Failed to send data: 258 68 68
+  E (287607) H_SDIO_DRV: Unrecoverable host sdio state
+  I (287607) os_wrapper_esp: Restarting host
+  ```
+  258 is `ESP_ERR_INVALID_ARG` (0x102), not a timeout (that would be 263). The 68-byte packet is the MQTT keepalive
+  ping; when a test publish happened to land there it was the 70-byte PUBACK instead.
+- **Root cause (P4 host side, not the C6).** ESP-Hosted 2.12.11 carves its SDIO transmit pool out of one 64-byte
+  aligned PSRAM allocation in 1600-byte blocks. `projects/pet` runs the L2 cache with 128-byte lines
+  (`CONFIG_CACHE_L2_CACHE_LINE_128B`, chosen for display bandwidth), and 1600 mod 128 = 64, so every second block
+  is misaligned for DMA out of PSRAM. The driver pads each write to a 512-byte block (`H_SDIO_TX_BLOCK_ONLY_XFER`),
+  the IDF SDMMC driver rejects the misaligned buffer with `ESP_ERR_INVALID_ARG`, the hosted driver retries once with
+  the same buffer and then reboots the host (`CONFIG_ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE=y`). Upstream report:
+  esp-hosted-mcu issue 252; Espressif says the fix shipped in ESP-Hosted-MCU 2.13.0.
+- **Why exactly 288 s.** The pool hands back the most recently freed block, so one packet at a time keeps reusing
+  the same, aligned block. lwIP re-requests an ARP entry when it is used after 270 s of age
+  (`ARP_AGE_REREQUEST_USED_UNICAST` in `etharp.c`). The broker's entry is created at the MQTT connect, about 16.7 s
+  after boot, so the first TCP send after roughly 286.7 s (the next keepalive ping or a PUBACK) is preceded by a
+  unicast ARP request: two buffers are in flight, the second one is the misaligned block, and the host reboots. Any
+  burst of two outgoing frames would do the same; the ARP timer just made it periodic.
+- **Fix.** `CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=n` in `projects/pet/sdkconfig.defaults` (and flipped in the
+  live `sdkconfig`): the pools move to internal RAM, where 64-byte alignment is all the L1 cache needs.
+  `projects/wifi-check` keeps the default 64-byte L2 line and was never affected. The alternative is bumping
+  `esp_hosted` to 2.13.0 (`esp_wifi_remote` 1.6.3 allows `>=2.11,<3.0`); not done tonight, to keep the pair the
+  vendor docs pin.
+- **Verified.** See the next entry.
+- **Other milestone 5 facts.** Each boot now takes three attempts to join Wi-Fi (reason 1 at 7.4 s, reason 205 at
+  10.8 s, IP at 16.6 s, MQTT at 16.8 s), versus a first-try join at 8.5 s during milestone 4; the backoff reconnect in
+  `net.c` handles it, cause not chased. The RTC keeps time across `esp_restart`, so the clock shows at once after a
+  soft reset, before SNTP answers. Two bridge processes with the same MQTT client id kick each other off the broker
+  ("session taken over" in the Mosquitto log); `publish.py` now appends its pid to the id.
+
+## 2026-10-15 21:05: fix verified
+
+- Rebuilt `projects/pet` with `CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=n`, flashed at 20:53, recorded the UART for
+  600 s: zero `Failed to send`, zero restarts, nine 60-second heartbeats through 548 s of uptime (well past the 288 s
+  mark and the ARP re-request at about 279 s), and a live `pet/state` at 455 s applied normally. Mosquitto shows one
+  `pet-box` connection at 20:54:04 and no "session taken over" since; before the fix that happened every 288 s.
+- Cost: free internal RAM settles at about 142 KB with the pools internal (the `alive` log line now prints it next to
+  the total); PSRAM free is unchanged at about 29 MB. Boot timing unchanged: IP 8.6 s, MQTT 8.65 s, retained state
+  drawn 8.67 s after reset.

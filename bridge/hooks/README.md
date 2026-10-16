@@ -18,6 +18,30 @@ nothing. `--status` prints the table only; `--connect claude codex --yes` and `-
 On a machine that posts to the home Mac over Tailscale, `--bridge URL --token TOKEN` (printed by `--share` on
 the Mac) sets where the hooks post; see "From your other machines" in `../README.md`.
 
+### On Windows
+
+Clone the repo on the Windows machine, install Python 3.11 or later from python.org (it brings the `py` launcher), and
+in a terminal at the checkout run:
+
+```bat
+py bridge\connect.py --bridge http://<home-mac>.<tailnet>.ts.net:8765/event --token <token from --share>
+py bridge\connect.py
+py bridge\notify.py --source local --kind done --session windows-test
+```
+
+The last line should put a bubble on the box. `python3` is often missing on Windows, so the hooks are written with
+the Python that ran `connect.py`, and the script by absolute path:
+
+- Claude Code and Aider: `"C:/.../python.exe" "C:/.../bridge/hooks/claude_hook.py"`, quoted with forward slashes,
+  which both Git Bash and `cmd /c "..."` run. No `2>/dev/null || true`: `cmd` has neither.
+- Goose: its config is `%APPDATA%\Block\goose\config\config.yaml`, and it runs the hook as `cmd /C "<hook> <status>"`
+  through Rust's argument quoting, which breaks on any quote in the line. So that line has backslashes, no quotes and
+  no spaces; a space in either path is replaced by its 8.3 short name, and if Windows has none `connect.py` says so and
+  leaves the file alone.
+- Codex: `notify` is a list run without a shell, so it is just the two paths.
+- `~/.config/desk-pet/bridge.json` is `%USERPROFILE%\.config\desk-pet\bridge.json`. Windows has no 0600; the file is
+  private because the user profile is readable only by that account and administrators.
+
 - Claude Code: the three hook groups of `claude-settings.json` are merged into `~/.claude/settings.json`. Other keys
   and other hooks are kept; disconnecting removes only the hook entries that run `claude_hook.py`.
 - Codex: the `notify` route (`codex_notify.py`), because lifecycle hooks need the Codex CLI's `/hooks` trust step and

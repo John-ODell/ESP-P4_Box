@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connect the AI tools on this Mac to the desk pet, the way `goose configure` or `ollama launch` offers integrations.
+"""Connect the AI tools on this computer (macOS or Windows) to the desk pet, the way `goose configure` or `ollama launch` offers integrations.
 
     python3 bridge/connect.py                      menu: what is found, what is connected; pick to connect or undo
     python3 bridge/connect.py --status             the table only
@@ -31,7 +31,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent / "hooks"))
@@ -59,6 +59,55 @@ def script_ref(repo: Path, home: Path, name: str) -> str:
         return f'"{path}"'
 
 
+def on_windows() -> bool:
+    return os.name == "nt"
+
+
+def short_path(path: str) -> str:
+    """The 8.3 form of an existing Windows path (no spaces), or the path itself when Windows has none."""
+    import ctypes
+    windll = getattr(ctypes, "windll", None)  # Windows only
+    if " " not in path or windll is None:
+        return path
+    buf = ctypes.create_unicode_buffer(1024)
+    n = windll.kernel32.GetShortPathNameW(path, buf, len(buf))
+    return buf.value if 0 < n < len(buf) else path
+
+
+def hook_command(repo: Path, home: Path, name: str, quotes: bool = True) -> str:
+    """The shell line that runs a hook script.
+
+    macOS: python3 "$HOME/...", as in hooks/README.md. Windows (#39): the Python running this script and the hook by
+    absolute path, since python3 is often missing there. With `quotes`, both quoted and with forward slashes, which
+    Git Bash and `cmd /c "..."` both run (Claude Code, Aider). Without, for Goose, whose `cmd /C` goes through Rust's
+    argument quoting and breaks on any quote in the line: backslashes, no quotes, and so no spaces (8.3 names stand
+    in where Windows has them)."""
+    if not on_windows():
+        return f"python3 {script_ref(repo, home, name)}"
+    paths = [sys.executable, str(repo.resolve() / "bridge" / "hooks" / name)]
+    if quotes:
+        words = [PureWindowsPath(x).as_posix() for x in paths]
+        bad = '"%$`!^&|<>\n'
+    else:
+        words = [str(PureWindowsPath(short_path(x))) for x in paths]
+        bad = ' "%&|<>^()\n'
+    for word in words:
+        if any(c in word for c in bad):
+            raise ConnectError(f"{word} has a space or a character the command line would misread; move it to a "
+                               "folder without one (or reinstall Python there)")
+    return " ".join(f'"{w}"' for w in words) if quotes else " ".join(words)
+
+
+def mentions(text: str, mark: str) -> bool:
+    """True when `text` names the hook in `mark` (bridge/hooks/x.py), with / or \\ between folders."""
+    return mark in str(text).replace("\\", "/")
+
+
+def quiet() -> str:
+    """What follows a hook command so a missing Python never shows as an error: sh only; cmd has no `true`."""
+    return "" if on_windows() else " 2>/dev/null || true"
+
+
 class Tool:
     key = label = script = ""  # script: the hook in bridge/hooks/ the tool will run
 
@@ -70,7 +119,7 @@ class Tool:
         raise NotImplementedError
 
     def found(self) -> str:
-        """Where the tool was seen, or "" when it is not on this Mac."""
+        """Where the tool was seen, or "" when it is not on this computer."""
         raise NotImplementedError
 
     def connected_in(self, text: str) -> bool:
@@ -116,14 +165,14 @@ class ClaudeCode(Tool):
         return data
 
     def _ours(self, hook) -> bool:
-        return isinstance(hook, dict) and self.MARK in str(hook.get("command", ""))
+        return isinstance(hook, dict) and mentions(hook.get("command", ""), self.MARK)
 
     def _snippet(self) -> dict:
         return json.loads((self.repo / "bridge" / "hooks" / "claude-settings.json").read_text(encoding="utf-8"))
 
     def _wanted(self) -> dict:
         snippet = self._snippet()
-        command = f"python3 {script_ref(self.repo, self.home, 'claude_hook.py')} 2>/dev/null || true"
+        command = hook_command(self.repo, self.home, "claude_hook.py") + quiet()
         for groups in snippet["hooks"].values():
             for group in groups:
                 for hook in group["hooks"]:
@@ -201,7 +250,7 @@ class CodexApp(Tool):
 
     def connected_in(self, text: str) -> bool:
         value = self._notify(text)
-        return bool(value) and any(x.endswith(self.MARK) for x in value[:2])
+        return bool(value) and any(x.replace("\\", "/").endswith(self.MARK) for x in value[:2])
 
     def _with_notify(self, text: str, value: list | None) -> str:
         """`text` with its top-level notify line replaced by `value`, added at the top when missing, removed for
@@ -225,8 +274,9 @@ class CodexApp(Tool):
         if self.connected_in(text):
             return text
         old = self._notify(text)
-        script = str(self.repo / "bridge" / "hooks" / "codex_notify.py")
-        return self._with_notify(text, ["python3", script] + (["--then", *old] if old else []))
+        script = self.repo / "bridge" / "hooks" / "codex_notify.py"
+        run = [sys.executable, str(script.resolve())] if on_windows() else ["python3", str(script)]  # no shell
+        return self._with_notify(text, run + (["--then", *old] if old else []))
 
     def disconnect_text(self, text: str) -> str:
         if not self.connected_in(text):
@@ -255,12 +305,15 @@ class LineConfig(Tool):
 
     def found(self) -> str:
         if self.path().exists():
-            return "~/" + str(self.path().relative_to(self.home))
+            try:
+                return "~/" + self.path().relative_to(self.home).as_posix()
+            except ValueError:
+                return str(self.path())
         return shutil.which(self.key) or ""
 
     def connected_in(self, text: str) -> bool:
         lines = text.splitlines(keepends=True)
-        return any(self.SCRIPT in lines[i] for i in self.hits(lines, self.KEY))
+        return any(mentions(lines[i], self.SCRIPT) for i in self.hits(lines, self.KEY))
 
     def connect_text(self, text: str) -> str:
         if self.connected_in(text):
@@ -268,7 +321,7 @@ class LineConfig(Tool):
         lines = text.splitlines(keepends=True)
         extra = self.extra(lines)  # may refuse first, with the more useful reason
         hook = self.hits(lines, self.KEY)
-        taken = [i for i in hook if self.SCRIPT not in lines[i]]
+        taken = [i for i in hook if not mentions(lines[i], self.SCRIPT)]
         if taken:
             raise ConnectError(f"{self.path()} already sets `{lines[taken[0]].strip()}`; remove it or edit by hand")
         if lines and not lines[-1].endswith("\n"):
@@ -279,21 +332,26 @@ class LineConfig(Tool):
 
     def disconnect_text(self, text: str) -> str:
         lines = text.splitlines(keepends=True)
-        ours = set(i for i in self.hits(lines, self.KEY) if self.SCRIPT in lines[i])
+        ours = set(i for i in self.hits(lines, self.KEY) if mentions(lines[i], self.SCRIPT))
         kept = [line for i, line in enumerate(lines) if i not in ours and not line.rstrip().endswith(self.MARK)]
         return text if len(kept) == len(lines) else "".join(kept)
 
 
 class Goose(LineConfig):
-    """GOOSE_STATUS_HOOK in ~/.config/goose/config.yaml runs goose_hook.py (Goose CLI sessions)."""
+    """GOOSE_STATUS_HOOK in Goose's config.yaml runs goose_hook.py (Goose CLI sessions): ~/.config/goose on macOS,
+    %APPDATA%\\Block\\goose\\config on Windows."""
     key, label, script = "goose", "Goose", "goose_hook.py"
     KEY, SCRIPT = "GOOSE_STATUS_HOOK", "bridge/hooks/goose_hook.py"
 
     def path(self) -> Path:
+        if on_windows():
+            appdata = os.environ.get("APPDATA")
+            base = Path(appdata) if appdata else self.home / "AppData" / "Roaming"
+            return base / "Block" / "goose" / "config" / "config.yaml"
         return self.home / ".config" / "goose" / "config.yaml"
 
     def command(self) -> str:
-        return f"python3 {script_ref(self.repo, self.home, 'goose_hook.py')}"  # Goose appends the status word
+        return hook_command(self.repo, self.home, "goose_hook.py", quotes=False)  # Goose appends the status word
 
 
 class Aider(LineConfig):
@@ -305,7 +363,7 @@ class Aider(LineConfig):
         return self.home / ".aider.conf.yml"
 
     def command(self) -> str:
-        return f"python3 {script_ref(self.repo, self.home, 'aider_hook.py')} 2>/dev/null || true"
+        return hook_command(self.repo, self.home, "aider_hook.py") + quiet()
 
     ON = ("true", "yes", "on", "1")  # what Aider's config parser reads as on, quoted or not
 
@@ -625,7 +683,7 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
         results = []
         for name in dict.fromkeys(names):
             if args.connect and not by_key[name].found():
-                out(f"{by_key[name].label}: not found on this Mac, so nothing to connect.")
+                out(f"{by_key[name].label}: not found on this computer, so nothing to connect.")
                 results.append(False)
                 continue
             results.append(change(by_key[name], bool(args.connect), args.yes, out, ask))
@@ -646,7 +704,7 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
     results = []
     for tool in chosen:
         if not tool.found():
-            out(f"{tool.label}: not found on this Mac, skipped.")
+            out(f"{tool.label}: not found on this computer, skipped.")
             continue
         results.append(change(tool, every or state(tool) != "connected", args.yes, out, ask))
     return 0 if all(results) else 1

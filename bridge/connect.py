@@ -42,6 +42,8 @@ class ConnectError(Exception):
 def script_ref(repo: Path, home: Path, name: str) -> str:
     """A hook script as a shell word: "$HOME/..." under the home folder, so the line reads the same on any account."""
     path = repo.resolve() / "bridge" / "hooks" / name
+    if any(c in str(path) for c in '"$`\\\n'):
+        raise ConnectError(f"{path} has a character a shell would read inside double quotes; move the checkout")
     try:
         return '"$HOME/' + str(path.relative_to(home.resolve())) + '"'
     except ValueError:
@@ -114,7 +116,8 @@ class ClaudeCode(Tool):
 
     def _has(self, groups, event: str) -> bool:
         return isinstance(groups, list) and any(
-            isinstance(g, dict) and any(self._ours(h) for h in g.get("hooks", []) or []) for g in groups)
+            isinstance(g, dict) and isinstance(g.get("hooks"), list) and any(self._ours(h) for h in g["hooks"])
+            for g in groups)
 
     def connected_in(self, text: str) -> bool:
         hooks = self._load(text).get("hooks", {})
@@ -270,14 +273,22 @@ def change(tool: Tool, connect: bool, yes: bool, out=print, ask=input) -> bool:
         out(f"{tool.label}: left alone.")
         return False
     tmp = path.with_name(path.name + ".pet-tmp")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp.write_text(new, encoding="utf-8")
-    if path.exists():
-        backup = path.with_name(f"{path.name}.pet-backup-{datetime.now():%Y%m%d-%H%M%S}")
-        shutil.copy2(path, backup)
-        shutil.copymode(path, tmp)  # config.toml is 0600; keep it that way
-        out(f"Backup: {backup}")
-    os.replace(tmp, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(new, encoding="utf-8")
+        if path.exists():
+            stamp = f"{path.name}.pet-backup-{datetime.now():%Y%m%d-%H%M%S}"
+            backup, n = path.with_name(stamp), 1
+            while backup.exists():  # two writes in one second keep both backups
+                backup, n = path.with_name(f"{stamp}-{n}"), n + 1
+            shutil.copy2(path, backup)
+            shutil.copymode(path, tmp)  # config.toml is 0600; keep it that way
+            out(f"Backup: {backup}")
+        os.replace(tmp, path)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        out(f"{tool.label}: could not write {path} ({e}); it is unchanged.")
+        return False
     ok = tool.connected() == connect
     out(f"{tool.label}: {verb}, takes effect in sessions started from now on." if ok else
         f"{tool.label}: wrote {path} but it does not read back as {verb}; the backup above has the old file.")
@@ -287,13 +298,15 @@ def change(tool: Tool, connect: bool, yes: bool, out=print, ask=input) -> bool:
 def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--status", action="store_true", help="print the table and stop")
-    parser.add_argument("--connect", nargs="+", metavar="TOOL", help="connect these (claude, codex)")
-    parser.add_argument("--disconnect", nargs="+", metavar="TOOL", help="remove what --connect added")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--connect", nargs="+", metavar="TOOL", help="connect these (claude, codex)")
+    action.add_argument("--disconnect", nargs="+", metavar="TOOL", help="remove what --connect added")
     parser.add_argument("--yes", action="store_true", help="write without asking; the diff is still printed")
     parser.add_argument("--repo", type=Path, default=REPO, help="checkout the hooks run from (default: this one)")
     args = parser.parse_args(argv)
     repo = args.repo.expanduser().resolve()
-    if not (repo / "bridge" / "hooks" / "claude_hook.py").is_file():
+    needed = ("claude_hook.py", "claude-settings.json", "codex_notify.py", "pethook.py")
+    if not all((repo / "bridge" / "hooks" / name).is_file() for name in needed):
         out(f"{repo} is not an ESP-P4_Box checkout with bridge/hooks in it.")
         return 2
     items = tools(home, repo)
@@ -307,18 +320,31 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
         if unknown:
             out(f"Unknown tool: {', '.join(unknown)}. Known: {', '.join(by_key)}.")
             return 2
-        results = [change(by_key[n], bool(args.connect), args.yes, out, ask) for n in names]
+        results = []
+        for name in dict.fromkeys(names):
+            if args.connect and not by_key[name].found():
+                out(f"{by_key[name].label}: not found on this Mac, so nothing to connect.")
+                results.append(False)
+                continue
+            results.append(change(by_key[name], bool(args.connect), args.yes, out, ask))
         return 0 if all(results) else 1
-    picks = ask("Pick by number to connect, or to disconnect one that is connected (e.g. 1 2), "
-                "'all', or Enter to quit: ").split()
-    numbers = [int(p) for p in picks if p.isdigit() and 0 < int(p) <= len(items)]
-    chosen = items if picks == ["all"] else [items[n - 1] for n in numbers]
+    try:
+        picks = ask("Pick by number to connect, or to disconnect one that is connected (e.g. 1 2), "
+                    "'all', or Enter to quit: ").lower().split()
+    except EOFError:
+        return 0
+    every = picks == ["all"]
+    bad = [p for p in picks if not every and not (p.isdigit() and 0 < int(p) <= len(items))]
+    if bad:
+        out(f"Not a choice: {' '.join(bad)}. Use the numbers 1 to {len(items)}, or 'all'.")
+        return 2
+    chosen = items if every else [items[int(p) - 1] for p in dict.fromkeys(picks)]
     results = []
     for tool in chosen:
         if not tool.found():
             out(f"{tool.label}: not found on this Mac, skipped.")
             continue
-        results.append(change(tool, state(tool) != "connected" or picks == ["all"], args.yes, out, ask))
+        results.append(change(tool, every or state(tool) != "connected", args.yes, out, ask))
     return 0 if all(results) else 1
 
 

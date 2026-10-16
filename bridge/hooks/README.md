@@ -21,8 +21,14 @@ nothing. `--status` prints the table only; `--connect claude codex --yes` and `-
 - Codex: the `notify` route (`codex_notify.py`), because lifecycle hooks need the Codex CLI's `/hooks` trust step and
   are unverified (#13). The `notify` command already in `~/.codex/config.toml` is chained after `--then` and comes
   back unchanged on disconnect. Only a one-line `notify = [...]` is edited; anything else is refused.
-- Goose and Aider are #31. Ollama is a model server, so its sessions reach the pet through the tool that drives it;
-  direct use is #32.
+- Goose: a `GOOSE_STATUS_HOOK` line appended to `~/.config/goose/config.yaml`, running `goose_hook.py`. Aider: a
+  `notifications-command` line in `~/.aider.conf.yml`, plus `notifications: true` when the file does not set it.
+  Lines added there end with `# desk pet: bridge/connect.py`; disconnecting removes those lines and the hook line,
+  also after Goose rewrote the file without the comment. A status hook or `notifications: false` that is already
+  there is refused, not replaced.
+- Ollama is a model server, so its sessions reach the pet through the tool that drives it (Goose, Aider, or
+  Claude Code started with `ollama launch claude`); direct use is #32. Connecting refuses when the checkout named
+  by `--repo` does not have the tool's hook script yet.
 - Changes apply to sessions started afterwards. A running Claude Code session picks up new hooks after a look in
   `/hooks`.
 
@@ -31,6 +37,8 @@ nothing. `--status` prints the table only; `--connect claude codex --yes` and `-
 | Claude Code (terminal and desktop app) | native hooks: `claude-settings.json` runs `claude_hook.py` | `needs_input` for permission prompts and questions, `done` when a turn finishes | yes, on the next prompt you type in a session in that folder | live, Claude Code 2.1.261, `claude -p` with `--settings`, nothing global touched |
 | Codex, lifecycle hooks | `codex-hooks.json` runs `codex_hook.py` | `needs_input` for approval requests, `done` | yes, next prompt | sample payloads only: no `codex` on PATH; the ChatGPT app bundles `codex-cli 0.162.0-alpha.17.2`, not driven, so whether it runs `hooks.json` is unknown (#13) |
 | Codex, the older `notify` setting | `codex-config.snippet.toml` runs `codex_notify.py` | `done` only | no: the bubble goes on the next finished turn or a tap | sample payload only; chains the notify command already in `config.toml` |
+| Goose CLI (any model, Ollama included) | `GOOSE_STATUS_HOOK` runs `goose_hook.py` with `thinking` or `waiting` | `done` when it is back at its prompt | yes, next prompt | `sh -c` runs with sample statuses; no live Goose session (it would need a model) |
+| Aider (any model, Ollama included) | `notifications-command` runs `aider_hook.py` | `done` when a reply is ready or it asks a yes/no question | no: next `done` or a tap | `sh -c` run without a bridge; no live Aider session |
 | Any script, cron job or local model | a wrapper around `../notify.py` | whatever you post, including `error` | your call | live |
 | Chat apps without hooks (ChatGPT, Claude.ai in a browser, Cursor chat) | nothing | nothing | - | not possible without a wrapper |
 
@@ -54,6 +62,14 @@ nothing. `--status` prints the table only; `--connect claude codex --yes` and `-
   `done`. Codex appends the payload as the last argument; with `--then CMD ARGS` the script posts its event and
   then starts that command with the same payload appended, without waiting for it, so a notify command that is
   already configured keeps working and can neither hold up nor lose the pet's event.
+- `goose_hook.py` takes Goose's status word as its last argument: `thinking` becomes `cleared`, `waiting` becomes
+  `done` (title "waiting for you"; Goose passes no text). Goose also says `waiting` once at startup, so `waiting`
+  only counts after a `thinking` in the same folder, remembered by a `pet-goose-<hash>` file in the temp folder.
+  Goose appends the word to the command text, so the configured line has no `2>/dev/null || true`; Goose throws
+  the output away and does not wait for it anyway. The hook belongs to the Goose CLI; the Goose desktop app does
+  not run it.
+- `aider_hook.py` posts `done` for the folder. Aider runs it with no arguments and waits for it, both when a reply
+  is ready and when it asks a yes/no question, and only after the model has worked, so not at startup.
 - `pethook.py` is shared: first-line trimming, the folder name, the POST (no proxies, one-second timeout).
 - Every script prints nothing on stdout, swallows every error and exits 0, so a stopped bridge can never block or
   slow a session. `PET_NOTIFY_URL` overrides the endpoint for all of them.

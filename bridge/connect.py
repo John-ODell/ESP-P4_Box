@@ -3,7 +3,7 @@
 
     python3 bridge/connect.py                      menu: what is found, what is connected; pick to connect or undo
     python3 bridge/connect.py --status             the table only
-    python3 bridge/connect.py --connect claude codex [--yes]
+    python3 bridge/connect.py --connect claude codex goose aider [--yes]
     python3 bridge/connect.py --disconnect codex [--yes]
     --repo PATH                                    point the hooks at another checkout (default: this one)
 
@@ -28,8 +28,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 BRIDGE = os.environ.get("PET_NOTIFY_URL", "http://127.0.0.1:8765/event").rsplit("/", 1)[0]
 LATER = [  # tools the pet knows but cannot connect yet: (label, how to tell it is here, note)
-    ("Goose", "goose", "connector coming in #31"),
-    ("Aider", "aider", "connector coming in #31"),
     ("Ollama", "ollama", "model server: its sessions show through the tool that drives it (Goose, Aider, "
                          "`ollama launch claude`); direct use is #32"),
 ]
@@ -49,7 +47,7 @@ def script_ref(repo: Path, home: Path, name: str) -> str:
 
 
 class Tool:
-    key = label = ""
+    key = label = script = ""  # script: the hook in bridge/hooks/ the tool will run
 
     def __init__(self, home: Path | None = None, repo: Path = REPO):
         self.home = home or Path.home()
@@ -80,7 +78,7 @@ class Tool:
 
 class ClaudeCode(Tool):
     """Merges the three hook groups of hooks/claude-settings.json into ~/.claude/settings.json."""
-    key, label = "claude", "Claude Code"
+    key, label, script = "claude", "Claude Code", "claude_hook.py"
     MARK = "bridge/hooks/claude_hook.py"
 
     def path(self) -> Path:
@@ -159,7 +157,7 @@ class ClaudeCode(Tool):
 class CodexApp(Tool):
     """Puts codex_notify.py in front of the `notify` command in ~/.codex/config.toml and keeps the old one after
     --then, so whatever notify ran before (the Codex app sets its own) still runs with the same payload."""
-    key, label = "codex", "Codex"
+    key, label, script = "codex", "Codex", "codex_notify.py"
     MARK = "bridge/hooks/codex_notify.py"
 
     def path(self) -> Path:
@@ -217,8 +215,87 @@ class CodexApp(Tool):
         return self._with_notify(text, rest or None)
 
 
+class LineConfig(Tool):
+    """A YAML settings file edited one top-level `key: value` line at a time, the only edit Goose and Aider need, so no
+    YAML library is required. Lines added here end with MARK; disconnect drops those and any KEY line naming SCRIPT."""
+    MARK = "# desk pet: bridge/connect.py"
+    KEY = SCRIPT = ""
+
+    def command(self) -> str:
+        raise NotImplementedError
+
+    def extra(self, lines: list[str]) -> list[str]:
+        """Other lines to add with the hook line."""
+        return []
+
+    @staticmethod
+    def hits(lines: list[str], key: str) -> list[int]:
+        return [i for i, line in enumerate(lines) if re.match(rf"{re.escape(key)}\s*:", line)]
+
+    def found(self) -> str:
+        if self.path().exists():
+            return "~/" + str(self.path().relative_to(self.home))
+        return shutil.which(self.key) or ""
+
+    def connected_in(self, text: str) -> bool:
+        lines = text.splitlines(keepends=True)
+        return any(self.SCRIPT in lines[i] for i in self.hits(lines, self.KEY))
+
+    def connect_text(self, text: str) -> str:
+        if self.connected_in(text):
+            return text
+        lines = text.splitlines(keepends=True)
+        taken = self.hits(lines, self.KEY)
+        if taken:
+            raise ConnectError(f"{self.path()} already sets `{lines[taken[0]].strip()}`; remove it or edit by hand")
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        quoted = "'" + self.command().replace("'", "''") + "'"  # YAML single quotes: only ' itself is escaped
+        return "".join(lines + self.extra(lines) + [f"{self.KEY}: {quoted}  {self.MARK}\n"])
+
+    def disconnect_text(self, text: str) -> str:
+        lines = text.splitlines(keepends=True)
+        ours = set(i for i in self.hits(lines, self.KEY) if self.SCRIPT in lines[i])
+        kept = [line for i, line in enumerate(lines) if i not in ours and not line.rstrip().endswith(self.MARK)]
+        return text if len(kept) == len(lines) else "".join(kept)
+
+
+class Goose(LineConfig):
+    """GOOSE_STATUS_HOOK in ~/.config/goose/config.yaml runs goose_hook.py (Goose CLI sessions)."""
+    key, label, script = "goose", "Goose", "goose_hook.py"
+    KEY, SCRIPT = "GOOSE_STATUS_HOOK", "bridge/hooks/goose_hook.py"
+
+    def path(self) -> Path:
+        return self.home / ".config" / "goose" / "config.yaml"
+
+    def command(self) -> str:
+        return f"python3 {script_ref(self.repo, self.home, 'goose_hook.py')}"  # Goose appends the status word
+
+
+class Aider(LineConfig):
+    """notifications-command in ~/.aider.conf.yml runs aider_hook.py; it needs notifications: true as well."""
+    key, label, script = "aider", "Aider", "aider_hook.py"
+    KEY, SCRIPT = "notifications-command", "bridge/hooks/aider_hook.py"
+
+    def path(self) -> Path:
+        return self.home / ".aider.conf.yml"
+
+    def command(self) -> str:
+        return f"python3 {script_ref(self.repo, self.home, 'aider_hook.py')} 2>/dev/null || true"
+
+    def extra(self, lines: list[str]) -> list[str]:
+        on = self.hits(lines, "notifications")
+        if not on:
+            return [f"notifications: true  {self.MARK}\n"]
+        value = lines[on[0]].split(":", 1)[1].split("#", 1)[0].strip().lower()
+        if value not in ("true", "yes", "on"):
+            raise ConnectError(f"{self.path()} has `{lines[on[0]].strip()}`; the hook needs notifications on, "
+                               "so change that line first")
+        return []
+
+
 def tools(home: Path | None = None, repo: Path = REPO) -> list[Tool]:
-    return [ClaudeCode(home, repo), CodexApp(home, repo)]
+    return [ClaudeCode(home, repo), CodexApp(home, repo), Goose(home, repo), Aider(home, repo)]
 
 
 def bridge_state() -> str:
@@ -255,6 +332,10 @@ def show(items: list[Tool], out=print) -> None:
 def change(tool: Tool, connect: bool, yes: bool, out=print, ask=input) -> bool:
     """Show the edit, ask, back up, write, read back. True when the tool ends up in the asked-for state."""
     path = tool.path()
+    hook = tool.repo / "bridge" / "hooks" / tool.script
+    if connect and not hook.is_file():
+        out(f"{tool.label}: {hook} is not there; pull main in that checkout or pass --repo.")
+        return False
     old = tool.read()
     try:
         new = tool.connect_text(old) if connect else tool.disconnect_text(old)
@@ -287,7 +368,7 @@ def change(tool: Tool, connect: bool, yes: bool, out=print, ask=input) -> bool:
 def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--status", action="store_true", help="print the table and stop")
-    parser.add_argument("--connect", nargs="+", metavar="TOOL", help="connect these (claude, codex)")
+    parser.add_argument("--connect", nargs="+", metavar="TOOL", help="connect these (claude, codex, goose, aider)")
     parser.add_argument("--disconnect", nargs="+", metavar="TOOL", help="remove what --connect added")
     parser.add_argument("--yes", action="store_true", help="write without asking; the diff is still printed")
     parser.add_argument("--repo", type=Path, default=REPO, help="checkout the hooks run from (default: this one)")

@@ -50,9 +50,9 @@ not be able to break a session.
 **Codex.** Copy `codex-hooks.json` to `~/.codex/hooks.json` (every project) or `<repo>/.codex/hooks.json` (one
 project), then run `/hooks` in the Codex CLI to review and trust it: Codex skips a command hook until its exact
 text is trusted. The command is written as `"$HOME/..."` like the Claude one; Codex also runs hook commands through
-a shell (its hooks engine starts `<shell> -c`), so it expands. If yours does not, write the absolute path. If lifecycle hooks do not run in your Codex, the older `notify`
-route reports finished turns only: see `codex-config.snippet.toml`.
-Codex allows one notify command, so chain the one you already have after `--then`.
+a shell (its hooks engine starts `<shell> -lc`), so it expands; if yours does not, write the absolute path. If
+lifecycle hooks do not run in your Codex, the older `notify` route reports finished turns only: see
+`codex-config.snippet.toml`. Codex allows one notify command, so chain the one you already have after `--then`.
 
 ## Try it without installing anything
 

@@ -108,5 +108,5 @@ Small enough for the box and self-describing enough for a phone client later.
 The hook scripts, the settings snippets and the table of which tools can talk to the pet natively are in
 [hooks/README.md](hooks/README.md). Nothing there installs itself: the snippets are pasted by hand into the tool's
 own settings, after a look. Replying in a session clears its bubble without a tap for Claude Code and, unverified
-(#13), for Codex lifecycle hooks; the Codex `notify` route cannot: see "Replying in a session clears its bubble"
-there.
+(#13), for Codex lifecycle hooks; the Codex `notify` route cannot: see
+[Replying in a session clears its bubble](hooks/README.md#replying-in-a-session-clears-its-bubble-issue-8).

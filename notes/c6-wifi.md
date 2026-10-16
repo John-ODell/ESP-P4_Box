@@ -19,13 +19,17 @@ I wifi-check: scan found 36 APs
 
 Scan listed real neighbourhood SSIDs with channels, RSSI, and auth modes, so RPC, SDIO data path, and the radio all work.
 
+**Station connect verified too** (same evening, with a 2.4 GHz WPA2 SSID in `secrets.h`): the box associated and got a
+DHCP lease; the app's verdict line read `RESULT: connected to '<ssid>' with IP`. So the full chain the pet needs
+(init, scan, connect, DHCP) works on the factory C6 image. No C6 reflash required for this project.
+
 ## What the old slave image costs
 
 The factory slave predates version reporting ("Co-proc [0.0.0]"). With it:
 
 - `esp_hosted_get_coprocessor_fwversion`, `esp_hosted_get_cp_info`, and `esp_hosted_get_coprocessor_app_desc` time out
   (1 s, 1 s, 5 s). Do not call them in the pet firmware; they only add startup delay.
-- Basic station RPCs (init, start, scan, and presumably connect) work.
+- Basic station RPCs (init, start, scan, connect) and DHCP work.
 - The host logs one `Version mismatch` warning per boot. Harmless.
 
 ## Upgrade path if the old slave ever becomes a problem

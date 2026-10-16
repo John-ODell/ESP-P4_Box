@@ -62,9 +62,13 @@ idf.py -C vendor/waveshare-4b/examples/esp-idf/hello_world build
 
 ```
 vendor/waveshare-4b/   git submodule of Waveshare's official repo (examples, BSP, schematics)
-projects/              our own firmware projects, one folder each
-notes/                 scratch notes, pinouts, findings
+projects/pet/          the GitHub desk pet firmware (ESP-IDF + LVGL 9, see notes/pet-box-brief.md)
+projects/wifi-check/   Wi-Fi station smoke test for the ESP32-C6 co-processor (milestone 1)
+tools/serial_tail.py   passive UART reader that never toggles DTR/RTS
+notes/                 flashing notes, C6/Wi-Fi findings, the pet brief
 ```
+
+Board-specific rules learned the hard way are in `notes/flashing.md`; read it before building anything.
 
 Clone with submodules:
 

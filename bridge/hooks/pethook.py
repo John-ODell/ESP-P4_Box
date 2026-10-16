@@ -57,6 +57,16 @@ def folder_name(cwd, fallback: str) -> str:
     return fallback
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # a 3xx is a refusal, not a new address: the token must never follow it to another host
+
+
+def opener():
+    """urllib with no proxy (the bridge is this machine or a tailnet peer) and no redirects."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+
+
 def post(event: dict, url: str | None = None, timeout: float = TIMEOUT, token: str = "") -> bool:
     """POST one event to the bridge. False, never an exception, when it is not reachable, sick or says no. With no
     `url`, the configured bridge and its token (target())."""
@@ -67,10 +77,12 @@ def post(event: dict, url: str | None = None, timeout: float = TIMEOUT, token: s
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    local = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # the bridge is on this machine
     try:
-        with local.open(req, timeout=timeout) as resp:  # the body is not needed, and reading it would wait on it
+        with opener().open(req, timeout=timeout) as resp:  # the body is not needed, and reading it would wait on it
             return 200 <= resp.status < 300
+    except urllib.error.HTTPError as e:  # a 4xx, 5xx or refused redirect
+        e.close()
+        return False
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
         return False
 

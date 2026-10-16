@@ -13,6 +13,7 @@ Always exits 0, even on a bad option, and gives up after two seconds, so a hook 
 tool. Proxy settings in the environment are ignored: the bridge is on this machine.
 """
 import argparse
+import http.client
 import json
 import os
 import sys
@@ -45,15 +46,14 @@ def main() -> int:
     if a.token and (a.url == url or a.token != token):  # never send the configured token to a different --url
         headers["Authorization"] = f"Bearer {a.token}"
     req = urllib.request.Request(a.url, data=body, headers=headers, method="POST")
-    local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with local.open(req, timeout=a.timeout) as resp:
+        with pethook.opener().open(req, timeout=a.timeout) as resp:
             resp.read()
     except urllib.error.HTTPError as exc:
         if not a.quiet:
             print(f"notify: the bridge rejected the event ({exc.code}): "
                   f"{exc.read().decode(errors='replace')[:200]}", file=sys.stderr)
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as exc:  # ValueError: a bad URL
         if not a.quiet:
             print(f"notify: bridge not reachable at {a.url}: {exc}", file=sys.stderr)
     return 0

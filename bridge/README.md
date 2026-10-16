@@ -163,7 +163,10 @@ The bridge then also listens on this Mac's own Tailscale address, which it finds
 
 - It never listens on 0.0.0.0 or the home Wi-Fi address, and it does not start at all without a long token.
 - Every request there needs `Authorization: Bearer <token>` and a Tailscale source address; others get 401 or 403
-  and a log line. Tailscale encrypts the traffic between machines.
+  and a log line.
+- Tailscale encrypts the traffic, but only while Tailscale is on at both ends. Use the Mac's MagicDNS name
+  (`johns-macbook-pro.<tailnet>.ts.net`), not its 100.x address: with Tailscale off on the sending machine that name
+  does not resolve, so nothing is sent, where a raw address would go out unencrypted on whatever network it is on.
 - The loopback endpoint is unchanged, so hooks on this Mac need no token.
 
 Then, on this Mac, restart the bridge and run:

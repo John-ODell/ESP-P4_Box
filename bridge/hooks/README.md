@@ -2,7 +2,29 @@
 
 Everything here posts to the bridge's local endpoint, `POST http://127.0.0.1:8765/event` (the message format and
 rules are in [../README.md](../README.md), section "Session notifications"). Nothing in this folder installs
-itself: the snippets are pasted by hand into the tool's own settings, after a look at what they run.
+itself. Either paste a snippet into the tool's own settings by hand, or let `../connect.py` do it.
+
+## Connect with one command
+
+```bash
+python3 bridge/connect.py
+```
+
+It lists the tools the pet knows, whether each is on this Mac and whether it is connected, and whether the bridge is
+answering, then asks which to connect (picking a connected one offers to disconnect it). For every file it prints the
+diff, asks, copies the file to `<file>.pet-backup-<date>-<time>`, writes it, and reads it back. A second run changes
+nothing. `--status` prints the table only; `--connect claude codex --yes` and `--disconnect codex` skip the menu;
+`--repo PATH` points the hooks at another checkout, so run it from the checkout the bridge uses.
+
+- Claude Code: the three hook groups of `claude-settings.json` are merged into `~/.claude/settings.json`. Other keys
+  and other hooks are kept; disconnecting removes only the hook entries that run `claude_hook.py`.
+- Codex: the `notify` route (`codex_notify.py`), because lifecycle hooks need the Codex CLI's `/hooks` trust step and
+  are unverified (#13). The `notify` command already in `~/.codex/config.toml` is chained after `--then` and comes
+  back unchanged on disconnect. Only a one-line `notify = [...]` is edited; anything else is refused.
+- Goose and Aider are #31. Ollama is a model server, so its sessions reach the pet through the tool that drives it;
+  direct use is #32.
+- Changes apply to sessions started afterwards. A running Claude Code session picks up new hooks after a look in
+  `/hooks`.
 
 | Tool | How it talks to the pet | Reports | Clears itself | Checked on this Mac |
 |---|---|---|---|---|

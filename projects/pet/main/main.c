@@ -26,7 +26,8 @@ static const char *TAG = "pet";
 static int s_taps;
 static bool s_wifi_up, s_mqtt_up;
 static pet_state_t s_state;
-static pet_notify_t s_notify;  /* the waiting sessions, newest first; touched only with the display lock held */
+static pet_notify_t s_notify;
+static pet_notice_t s_top_seen; /* the newest entry ever on top of the list: anything later than it is news */  /* the waiting sessions, newest first; touched only with the display lock held */
 static bool s_swallow_click;   /* LVGL fires CLICKED after a gesture or long press; ignore that one */
 
 static const char *gesture_name(lv_dir_t d)
@@ -193,9 +194,19 @@ static void on_notify(const char *payload, size_t len, bool retained)
         ESP_LOGW(TAG, "could not take the display lock; notify list not drawn");
         return;
     }
-    /* News is a newest entry later than the one shown. A retained message is a replay (boot, reconnect): show it
-     * and hold the screen, but do not play the reaction again. */
-    bool news = !retained && nf.n > 0 && (s_notify.n == 0 || strcmp(nf.items[0].ts, s_notify.items[0].ts) > 0);
+    /* News is a top entry the box has not had on top before: a later ts than any so far, or another session within
+     * the same second. An older one surfacing after a clear is not news, and neither is a retained message, which is
+     * a replay (boot, reconnect): show it and hold the screen, but do not play the reaction again. */
+    bool news = false;
+    if (nf.n > 0) {
+        int c = strcmp(nf.items[0].ts, s_top_seen.ts);
+        bool other = strcmp(nf.items[0].source, s_top_seen.source) != 0 ||
+                     strcmp(nf.items[0].session, s_top_seen.session) != 0;
+        news = !retained && (c > 0 || (c == 0 && other));
+        if (c >= 0) {
+            s_top_seen = nf.items[0];
+        }
+    }
     s_notify = nf;
     if (nf.n > 0) {
         ESP_LOGI(TAG, "notify: %d pending, newest %s/%s %s%s", nf.count, nf.items[0].source, nf.items[0].session,

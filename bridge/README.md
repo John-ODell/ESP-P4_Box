@@ -102,3 +102,9 @@ Small enough for the box and self-describing enough for a phone client later.
   limit and the weights for private PRs and reviews cannot be honoured.
 - Calendar days are GitHub's; the detailed window buckets `occurredAt` into `PET_TZ` local days. The two can disagree
   by one day around midnight.
+
+## Hooks for Claude Code and Codex
+
+The hook scripts, the settings snippets and the table of which tools can talk to the pet natively are in
+[hooks/README.md](hooks/README.md). Nothing there installs itself: the snippets are pasted by hand into the tool's
+own settings, after a look.

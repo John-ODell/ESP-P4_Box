@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "permission_prompt|idle_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py\"", "timeout": 5 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py\"", "timeout": 5 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$HOME/Desktop/ESP-P4_Box/bridge/hooks/claude_hook.py\"", "timeout": 5 }
+        ]
+      }
+    ]
+      }
+    ]
+  }
+}

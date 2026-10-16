@@ -14,7 +14,6 @@ import json
 from datetime import datetime
 
 KINDS = ("needs_input", "done", "error", "cleared")
-SHOWN_KINDS = ("needs_input", "done", "error")
 MAX_SOURCE = 32
 MAX_SESSION = 64
 MAX_TITLE = 80

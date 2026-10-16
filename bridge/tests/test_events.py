@@ -140,7 +140,8 @@ class EndpointTests(unittest.TestCase):
             with urllib.request.urlopen(req, timeout=5) as resp:
                 return resp.status, json.loads(resp.read())
         except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
+            with exc:
+                return exc.code, json.loads(exc.read())
 
     def test_round_trip(self):
         self.assertEqual(self.call("POST", "/event", json.dumps(ev()).encode()), (200, {"ok": True, "pending": 1}))
@@ -148,7 +149,17 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual((status, pending["count"], pending["pending"][0]["session"]), (200, 1, "website"))
 
     def test_errors(self):
-        self.assertEqual(self.call("POST", "/event", b"nope")[0], 400)
+        with self.assertLogs("bridge.notify", level="WARNING") as logs:
+            self.assertEqual(self.call("POST", "/event", b"nope")[0], 400)
+            self.assertEqual(self.call("POST", "/event", b"x" * (MAX_BODY + 1))[0], 413)
+        self.assertEqual(len(logs.output), 2)
         self.assertEqual(self.call("POST", "/elsewhere", b"{}")[0], 404)
         self.assertEqual(self.call("GET", "/")[0], 404)
-        self.assertEqual(self.call("POST", "/event", b"x" * (MAX_BODY + 1))[0], 413)
+
+    def test_browser_cross_site_post_is_refused(self):
+        req = urllib.request.Request(self.url + "/event", data=json.dumps(ev()).encode(), method="POST",
+                                     headers={"Content-Type": "text/plain", "Origin": "https://example.com"})
+        with self.assertLogs("bridge.notify", level="WARNING"), self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        with cm.exception as exc:
+            self.assertEqual(exc.code, 403)

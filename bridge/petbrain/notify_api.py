@@ -1,7 +1,8 @@
 """The local HTTP endpoint for session events, and the glue that turns an event into MQTT messages.
 
     POST /event     JSON body (see events.parse_event) -> 200 {"ok": true, "pending": n}
-                    or 400 {"ok": false, "error": "..."}; 404 for any other path, 413 over MAX_BODY bytes
+                    or 400 {"ok": false, "error": "..."}; 404 for any other path, 413 over MAX_BODY bytes,
+                    403 for a request that carries a browser Origin header
     GET  /pending   the current pending list, the same object that is retained on pet/notify
 
 Notifier keeps the Pending list, publishes each accepted event on pet/event (not retained) and the pending list on
@@ -90,6 +91,11 @@ def make_server(host: str, port: int, notifier: Notifier) -> ThreadingHTTPServer
             self.wfile.write(data)
 
         def do_POST(self) -> None:
+            if self.headers.get("Origin"):  # browsers send Origin on cross-site POSTs; curl, urllib and hooks do not
+                log.warning("refused browser request from %s (Origin %s)", self.client_address[0],
+                            self.headers.get("Origin"))
+                self._send(403, {"ok": False, "error": "browser requests are not accepted"})
+                return
             if self.path != "/event":
                 self._send(404, {"ok": False, "error": "unknown path, POST /event"})
                 return
@@ -99,6 +105,7 @@ def make_server(host: str, port: int, notifier: Notifier) -> ThreadingHTTPServer
                 self._send(411, {"ok": False, "error": "Content-Length required"})
                 return
             if length < 0 or length > MAX_BODY:
+                log.warning("rejected event from %s: body of %s bytes", self.client_address[0], length)
                 self._send(413, {"ok": False, "error": f"body must be 0 to {MAX_BODY} bytes"})
                 return
             body = self.rfile.read(length)

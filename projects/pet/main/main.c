@@ -1,11 +1,12 @@
 /* Milestone 5: sprite character with mood-weighted idle animations and reactions, stats swipe, clock,
- * backlight schedule, on top of the milestone 4 Wi-Fi + MQTT plumbing. */
+ * backlight idle timer, on top of the milestone 4 Wi-Fi + MQTT plumbing. */
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
@@ -15,6 +16,7 @@
 #include "mqtt_link.h"
 #include "pet_state.h"
 #include "sched.h"
+#include "pet_config.h"
 
 static const char *TAG = "pet";
 static int s_taps;
@@ -45,6 +47,7 @@ static void touch_event_cb(lv_event_t *e)
     char buf[48];
     switch (code) {
     case LV_EVENT_PRESSED:
+        sched_touch(); /* brighten on finger-down, not on release */
         ESP_LOGI(TAG, "touch down  x=%d y=%d", (int)p.x, (int)p.y);
         break;
     case LV_EVENT_RELEASED:
@@ -81,6 +84,28 @@ static void touch_event_cb(lv_event_t *e)
     }
 }
 
+static const char *reset_reason_name(void)
+{
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power-on";
+    case ESP_RST_EXT: return "external pin";
+    case ESP_RST_SW: return "software restart";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT: return "interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "task watchdog";
+    case ESP_RST_WDT: return "other watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep sleep wake";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_SDIO: return "sdio";
+    case ESP_RST_USB: return "usb";
+    case ESP_RST_JTAG: return "jtag";
+    case ESP_RST_EFUSE: return "efuse error";
+    case ESP_RST_PWR_GLITCH: return "power glitch";
+    case ESP_RST_CPU_LOCKUP: return "cpu lockup";
+    default: return "unknown";
+    }
+}
+
 static void refresh_link_line(void)
 {
     const char *txt = !s_wifi_up ? "wifi: connecting" : (s_mqtt_up ? "wifi + mqtt ok" : "wifi ok, mqtt: connecting");
@@ -112,6 +137,7 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
         if (!pet_state_parse(payload, len, &st)) {
             return;
         }
+        bool changed = s_state.valid && (st.xp != s_state.xp || st.today.total != s_state.today.total || st.events);
         s_state = st;
         ESP_LOGI(TAG, "state: lv%d xp%d (%d/%d) mood %d %s streak %d%s today %d/%d%s%s events=0x%lx%s",
                  st.level, st.xp, st.xp_into, st.xp_next, st.mood, st.mood_label, st.streak,
@@ -120,6 +146,9 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
         if (bsp_display_lock(500)) {
             /* A retained message is a replay of old state: render it, but do not re-celebrate. */
             face_apply_state(&st, !retained);
+            if (changed && !retained) {
+                sched_activity("pet state changed"); /* wake the screen: something happened */
+            }
             bsp_display_unlock();
         } else {
             ESP_LOGW(TAG, "could not take the display lock; state not drawn");
@@ -140,10 +169,11 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     ESP_LOGI(TAG, "starting display");
+    ESP_LOGI(TAG, "boot: reset reason %s", reset_reason_name());
     lv_display_t *disp = bsp_display_start();
     ESP_ERROR_CHECK(disp != NULL ? ESP_OK : ESP_FAIL);
     ESP_ERROR_CHECK(bsp_display_backlight_on());
-    ESP_ERROR_CHECK(bsp_display_brightness_set(60));
+    ESP_ERROR_CHECK(bsp_display_brightness_set(PET_BRIGHT_FULL));
     ESP_LOGI(TAG, "display %dx%d up, touch indev %s", (int)lv_display_get_horizontal_resolution(disp),
              (int)lv_display_get_vertical_resolution(disp), bsp_display_get_input_dev() ? "ok" : "MISSING");
 
@@ -164,8 +194,9 @@ void app_main(void)
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(60000));
-        ESP_LOGI(TAG, "alive: wifi %s, mqtt %s, state %s, taps %d, free heap %u (internal %u)", s_wifi_up ? "up" : "down",
+        ESP_LOGI(TAG, "alive: wifi %s, mqtt %s, state %s, taps %d, free heap %u (internal %u), reset %s", s_wifi_up ? "up" : "down",
                  s_mqtt_up ? "up" : "down", s_state.valid ? s_state.ts : "none", s_taps,
-                 (unsigned)esp_get_free_heap_size(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                 (unsigned)esp_get_free_heap_size(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 reset_reason_name());
     }
 }

@@ -59,3 +59,8 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
   that through `grep` makes grep decide the stream is binary and print nothing at all, which looks like a dead board.
   `tools/serial_tail.py` now strips control bytes; if you pipe raw serial through grep anyway, use `grep -a`.
 - Build sizes: wifi-check 0xa5540 bytes, pet hello-face 0xbcf10 bytes in an 8 MB app partition.
+- **Milestone 2 touch verified on the board (2026-10-15 19:50):** 69 taps, swipes in all four directions, and long
+  presses all logged by `projects/pet` with coordinates spanning 0..719 on both axes, no touch calibration needed
+  (`touch_flags` all zero in the BSP default config). Quirk for later: LVGL fires `LV_EVENT_CLICKED` on release even
+  after a `LV_EVENT_GESTURE` or `LV_EVENT_LONG_PRESSED`, so the pet's input code must swallow the tap that follows a
+  swipe or long press.

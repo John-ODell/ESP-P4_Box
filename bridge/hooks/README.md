@@ -10,7 +10,7 @@ itself. Either paste a snippet into the tool's own settings by hand, or let `../
 python3 bridge/connect.py
 ```
 
-It lists the tools the pet knows, whether each is on this Mac and whether it is connected, and whether the bridge is
+It lists the tools the pet knows, whether each is on this computer and whether it is connected, and whether the bridge is
 answering, then asks which to connect (picking a connected one offers to disconnect it). For every file it prints the
 diff, asks, copies the file to `<file>.pet-backup-<date>-<time>`, writes it, and reads it back. A second run changes
 nothing. `--status` prints the table only; `--connect claude codex --yes` and `--disconnect codex` skip the menu;
@@ -24,7 +24,8 @@ the Mac) sets where the hooks post; see "From your other machines" in `../README
   are unverified (#13). The `notify` command already in `~/.codex/config.toml` is chained after `--then`, and
   disconnect puts back the same list, written as `notify = ["...", "..."]` (byte for byte when it was written that
   way). Only a one-line `notify = [...]` is edited; anything else is refused.
-- Goose: a `GOOSE_STATUS_HOOK` line appended to `~/.config/goose/config.yaml`, running `goose_hook.py`. Aider: a
+- Goose: a `GOOSE_STATUS_HOOK` line appended to `~/.config/goose/config.yaml` (Windows: below), running
+  `goose_hook.py`. Aider: a
   `notifications-command` line in `~/.aider.conf.yml`, plus `notifications: true` when the file does not set it.
   Lines added there end with `# desk pet: bridge/connect.py`; disconnecting removes those lines and the hook line,
   also after Goose rewrote the file without the comment. A status hook or `notifications` set to off that is
@@ -34,6 +35,35 @@ the Mac) sets where the hooks post; see "From your other machines" in `../README
 - Connecting any tool refuses when the checkout named by `--repo` does not have that tool's hook script yet.
 - Changes apply to sessions started afterwards. A running Claude Code session picks up new hooks after a look in
   `/hooks`.
+
+### On Windows
+
+Clone the repo on the Windows machine, install Python 3.11 or later from python.org (it brings the `py` launcher), and
+in a terminal at the checkout run:
+
+```bat
+py bridge\connect.py --bridge http://<home-mac>.<tailnet>.ts.net:8765/event --token <token from --share>
+py bridge\connect.py
+py bridge\notify.py --source local --kind done --session windows-test
+```
+
+The last line should put a bubble on the box. `python3` is often missing on Windows, so the hooks are written with
+the Python that ran `connect.py` (run it with the system Python, not from a venv, or that venv gets baked in) and the
+script by absolute path, in the form each tool's runner takes:
+
+- Claude Code: exec form, `"command"` set to `C:/.../python.exe` and `"args"` to the hook script's path. Claude Code
+  spawns that with no shell; in shell form it would use Git Bash, or PowerShell without Git Bash, and no one line
+  parses in both. Exec form needs a recent Claude Code (one whose hook docs list `args`).
+- Aider: `"C:/.../python.exe" "C:/.../bridge/hooks/aider_hook.py"`, quoted with forward slashes; Aider runs it with
+  Python's `shell=True`, which is `cmd /c "..."`. No `2>/dev/null || true`: `cmd` has neither.
+- Goose: its config is `%APPDATA%\Block\goose\config\config.yaml`, and it runs the hook as `cmd /C "<hook> <status>"`
+  through Rust's argument quoting, which breaks on any quote in the line. So that line has backslashes, no quotes and
+  no spaces: a space in the Python or the checkout folder is replaced by its 8.3 short name (the
+  `bridge\hooks\goose_hook.py` part stays as it is, so the line is still recognised as ours), and if Windows has
+  none `connect.py` says so and leaves the file alone.
+- Codex: `notify` is a list run without a shell, so it is just the two paths.
+- `~/.config/desk-pet/bridge.json` is `%USERPROFILE%\.config\desk-pet\bridge.json`. Windows has no 0600; the file is
+  private because the user profile is readable only by that account and administrators.
 
 | Tool | How it talks to the pet | Reports | Clears itself | Checked on this Mac |
 |---|---|---|---|---|

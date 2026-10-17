@@ -89,8 +89,10 @@ def post(event: dict, url: str | None = None, timeout: float = TIMEOUT, token: s
 
 def read_stdin_json():
     """The hook payload Claude Code or Codex writes on stdin, or None when it is not a JSON object."""
-    try:
-        payload = json.load(sys.stdin)
+    try:  # bytes, decoded as UTF-8 whatever the console code page (Windows reads stdin as cp1252 otherwise)
+        stream = getattr(sys.stdin, "buffer", sys.stdin)
+        data = stream.read()
+        payload = json.loads(data.decode("utf-8-sig", "replace") if isinstance(data, bytes) else data)
     except (ValueError, OSError):
         return None
     return payload if isinstance(payload, dict) else None

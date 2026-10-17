@@ -37,3 +37,7 @@ secrets.py
 bridge/var/
 bridge/mosquitto/pet.conf
 bridge/mosquitto/passwd
+
+# written by the release workflow from the tag (#51)
+projects/pet/version.txt
+dist/

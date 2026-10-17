@@ -31,6 +31,7 @@ venv/
 secrets.h
 secrets.py
 .env
+.env.setup-tmp
 
 # Bridge runtime files
 bridge/var/

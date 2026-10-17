@@ -338,11 +338,16 @@ void app_main(void)
     s_wifi_set_up = settings.wifi_src != SETTINGS_NONE;
     s_mqtt_set_up = settings.mqtt_src != SETTINGS_NONE;
     ESP_ERROR_CHECK(net_start(&settings, on_net));
+    s_wifi_set_up = net_set_up(); /* false too when the driver refused the saved values */
     if (s_wifi_set_up && !net_wait_ip(30000)) {
         ESP_LOGW(TAG, "no IP after 30 s; starting MQTT anyway, it will retry");
     }
     if (s_mqtt_set_up) {
-        ESP_ERROR_CHECK(mqtt_link_start(&settings, on_mqtt_msg, on_mqtt_status));
+        esp_err_t err = mqtt_link_start(&settings, on_mqtt_msg, on_mqtt_status);
+        if (err != ESP_OK) { /* settings come from NVS now: a bad one must not become a reboot loop */
+            ESP_LOGE(TAG, "MQTT did not start (%s); bridge treated as not set up", esp_err_to_name(err));
+            s_mqtt_set_up = false;
+        }
     } else {
         ESP_LOGW(TAG, "no bridge address saved: MQTT not started");
     }

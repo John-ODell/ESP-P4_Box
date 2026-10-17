@@ -17,6 +17,57 @@ static bool get_str(nvs_handle_t h, const char *key, char *buf, size_t cap)
     return nvs_get_str(h, key, buf, &len) == ESP_OK;
 }
 
+static bool len_between(const char *s, size_t lo, size_t hi)
+{
+    size_t n = s ? strlen(s) : 0;
+    return s && n >= lo && n <= hi;
+}
+
+/* mqtt://host or mqtt://host:port, port 1 to 65535; no user:pass@ (it would end up in the log), path or spaces. */
+static bool uri_ok(const char *uri)
+{
+    if (!len_between(uri, 8, SETTINGS_MQTT_MAX) || strncmp(uri, "mqtt://", 7) != 0) {
+        return false;
+    }
+    const char *host = uri + 7, *colon = strchr(host, ':');
+    size_t host_len = colon ? (size_t)(colon - host) : strlen(host);
+    if (host_len == 0 || strcspn(host, "@/?# \t") < strlen(host)) {
+        return false;
+    }
+    if (colon) {
+        long port = 0;
+        const char *p = colon + 1;
+        if (*p == '\0') {
+            return false;
+        }
+        for (; *p; p++) {
+            if (*p < '0' || *p > '9' || (port = port * 10 + (*p - '0')) > 65535) {
+                return false;
+            }
+        }
+        return port > 0;
+    }
+    return true;
+}
+
+static void reject_bad(pet_settings_t *s)
+{
+    const char *why;
+    if (s->wifi_src != SETTINGS_NONE && (why = settings_check_wifi(s->wifi_ssid, s->wifi_pass)) != NULL) {
+        ESP_LOGW(TAG, "wifi settings ignored: %s", why);
+        memset(s->wifi_ssid, 0, sizeof(s->wifi_ssid));
+        memset(s->wifi_pass, 0, sizeof(s->wifi_pass));
+        s->wifi_src = SETTINGS_NONE;
+    }
+    if (s->mqtt_src != SETTINGS_NONE && (why = settings_check_mqtt(s->mqtt_uri, s->mqtt_user, s->mqtt_pass)) != NULL) {
+        ESP_LOGW(TAG, "bridge settings ignored: %s", why);
+        memset(s->mqtt_uri, 0, sizeof(s->mqtt_uri));
+        memset(s->mqtt_user, 0, sizeof(s->mqtt_user));
+        memset(s->mqtt_pass, 0, sizeof(s->mqtt_pass));
+        s->mqtt_src = SETTINGS_NONE;
+    }
+}
+
 void settings_load(pet_settings_t *out)
 {
     memset(out, 0, sizeof(*out));
@@ -33,6 +84,9 @@ void settings_load(pet_settings_t *out)
         }
         nvs_close(h);
     }
+    /* Saved values are re-checked: anything that wrote NVS (an old build, another tool, a torn write) is not trusted
+     * with start-up, and a group that fails counts as not saved, so the box reaches setup instead of a reboot loop. */
+    reject_bad(out);
 #ifdef PET_WIFI_SSID
     if (out->wifi_src == SETTINGS_NONE) {
         strlcpy(out->wifi_ssid, PET_WIFI_SSID, sizeof(out->wifi_ssid));
@@ -48,21 +102,10 @@ void settings_load(pet_settings_t *out)
         out->mqtt_src = SETTINGS_BUILT_IN;
     }
 #endif
-    if (out->wifi_ssid[0] == '\0') {
-        out->wifi_src = SETTINGS_NONE;
-    }
-    if (out->mqtt_uri[0] == '\0') {
-        out->mqtt_src = SETTINGS_NONE;
-    }
+    reject_bad(out); /* a secrets.h with a typo gets the same treatment */
     static const char *const names[] = {"none", "saved", "built in"};
     ESP_LOGI(TAG, "wifi: %s '%s', bridge: %s %s", names[out->wifi_src], out->wifi_ssid, names[out->mqtt_src],
              out->mqtt_uri);
-}
-
-static bool len_between(const char *s, size_t lo, size_t hi)
-{
-    size_t n = s ? strlen(s) : 0;
-    return s && n >= lo && n <= hi;
 }
 
 const char *settings_check_wifi(const char *ssid, const char *pass)
@@ -78,7 +121,7 @@ const char *settings_check_wifi(const char *ssid, const char *pass)
 
 const char *settings_check_mqtt(const char *uri, const char *user, const char *pass)
 {
-    if (!len_between(uri, 1, SETTINGS_MQTT_MAX) || strncmp(uri, "mqtt://", 7) != 0 || uri[7] == '\0') {
+    if (!uri_ok(uri)) {
         return "bridge address must look like mqtt://host:port, up to 64 characters";
     }
     if (!len_between(user, 1, SETTINGS_MQTT_MAX) || !len_between(pass, 1, SETTINGS_MQTT_MAX)) {
@@ -87,13 +130,21 @@ const char *settings_check_mqtt(const char *uri, const char *user, const char *p
     return NULL;
 }
 
-/* Writes key/value pairs and commits, all or nothing as far as the commit goes. */
+/* Writes one group's key/value pairs. Each nvs_set_str is on flash when it returns (nvs_commit does nothing), so
+ * the group is erased first: a write cut short by an error or power loss leaves a key missing, which loads as not
+ * saved, never as a new name with an old password. */
 static esp_err_t save(const char *const *kv, int pairs)
 {
     nvs_handle_t h;
     esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
     if (err != ESP_OK) {
         return err;
+    }
+    for (int i = 0; i < pairs && err == ESP_OK; i++) {
+        err = nvs_erase_key(h, kv[2 * i]);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK;
+        }
     }
     for (int i = 0; i < pairs && err == ESP_OK; i++) {
         err = nvs_set_str(h, kv[2 * i], kv[2 * i + 1]);

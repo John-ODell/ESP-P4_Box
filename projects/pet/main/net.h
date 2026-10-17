@@ -16,5 +16,8 @@ typedef void (*net_status_cb_t)(net_status_t status, const char *detail);
 /* Brings up ESP-Hosted + Wi-Fi station and, when `settings` has Wi-Fi, joins it and keeps reconnecting. */
 esp_err_t net_start(const pet_settings_t *settings, net_status_cb_t cb);
 
+/* True when net_start was given Wi-Fi settings and the driver took them, so the box is trying to join. */
+bool net_set_up(void);
+
 /* Blocks until an IP is held or `timeout_ms` passes. */
 bool net_wait_ip(uint32_t timeout_ms);

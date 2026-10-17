@@ -88,14 +88,14 @@ esp_err_t net_start(const pet_settings_t *settings, net_status_cb_t cb)
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &on_event, NULL, NULL));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &on_event, NULL, NULL));
 
-    /* The settings store is the one saved copy of the password, so "forget" really forgets it. */
+    /* From now on the settings store holds the one saved copy of the password. Copies an older build left in the
+     * driver's own storage are not cleared here (#58). */
     err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "esp_wifi_set_storage(RAM): %s", esp_err_to_name(err));
     }
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     if (settings->wifi_src != SETTINGS_NONE) {
-        strlcpy(s_ssid, settings->wifi_ssid, sizeof(s_ssid));
         wifi_config_t wc = {
             .sta = {
                 /* an empty password is an open network, which a WPA2 threshold would refuse */
@@ -105,7 +105,12 @@ esp_err_t net_start(const pet_settings_t *settings, net_status_cb_t cb)
         };
         memcpy(wc.sta.ssid, settings->wifi_ssid, strlen(settings->wifi_ssid)); /* may fill all 32 bytes, no NUL */
         strlcpy((char *)wc.sta.password, settings->wifi_pass, sizeof(wc.sta.password));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
+        err = esp_wifi_set_config(WIFI_IF_STA, &wc);
+        if (err == ESP_OK) {
+            strlcpy(s_ssid, settings->wifi_ssid, sizeof(s_ssid));
+        } else { /* refused: stay "not set up" rather than abort into a reboot loop */
+            ESP_LOGE(TAG, "esp_wifi_set_config: %s", esp_err_to_name(err));
+        }
     }
     /* Started even when not set up, so the radio is ready for the setup screen's scan. */
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -115,6 +120,11 @@ esp_err_t net_start(const pet_settings_t *settings, net_status_cb_t cb)
         ESP_LOGW(TAG, "station started, not set up: no Wi-Fi saved");
     }
     return ESP_OK;
+}
+
+bool net_set_up(void)
+{
+    return s_ssid[0] != '\0';
 }
 
 bool net_wait_ip(uint32_t timeout_ms)

@@ -54,7 +54,8 @@ The box keeps its Wi-Fi and bridge settings in NVS (`main/settings.c`, #50), so 
 is set up after flashing. A box with nothing saved shows `not set up` in the bottom-right corner. For your own dev
 builds, `main/secrets.h` (gitignored) is optional: copy `main/secrets.h.example`, fill in the 2.4 GHz SSID and password,
 the Mac's IP, and the MQTT user/password from `bridge/.env`, and the box uses those values for any group NVS does not
-hold. The build works without the file.
+hold. The build works without the file. Adding it to a build folder that was configured without it is not noticed
+(the check is `__has_include`), so run `idf.py fullclean` or touch `main/settings.c` after creating it.
 
 ```bash
 source ~/esp/esp-idf/export.sh

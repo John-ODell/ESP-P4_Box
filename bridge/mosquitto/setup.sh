@@ -5,9 +5,11 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 ENV_FILE="$REPO/bridge/.env"
-[ -f "$ENV_FILE" ] || { echo "missing $ENV_FILE (copy bridge/.env.example and set MQTT_USER / MQTT_PASS)"; exit 1; }
-MQTT_USER=$(sed -n 's/^MQTT_USER=//p' "$ENV_FILE" | tail -1)
-MQTT_PASS=$(sed -n 's/^MQTT_PASS=//p' "$ENV_FILE" | tail -1)
+[ -f "$ENV_FILE" ] || { echo "missing $ENV_FILE (run: python3 bridge/setup.py)"; exit 1; }
+# As the bridge reads .env (load_dotenv): the first line for a key wins, one pair of quotes and any CR dropped.
+value() { tr -d '\r' < "$ENV_FILE" | sed -n "s/^$1=//p" | head -1 | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//'; }
+MQTT_USER=$(value MQTT_USER)
+MQTT_PASS=$(value MQTT_PASS)
 [ -n "$MQTT_USER" ] && [ -n "$MQTT_PASS" ] || { echo "MQTT_USER / MQTT_PASS not set in $ENV_FILE"; exit 1; }
 command -v mosquitto_passwd >/dev/null || { echo "mosquitto_passwd not found: brew install mosquitto"; exit 1; }
 sed "s#__REPO__#$REPO#g" "$HERE/pet.conf.template" > "$HERE/pet.conf"

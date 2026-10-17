@@ -146,6 +146,15 @@ class SetupTests(unittest.TestCase):
         self.run_setup(checks=dict(READY, python3=(3, 9)), version=(3, 12))
         self.assertIn("`python3` here is 3.9", self.text())
 
+    def test_no_python3_on_path_says_so(self):
+        self.run_setup(checks=dict(READY, python3=(0, 0)))
+        self.assertIn("there is no `python3` here", self.text())
+        self.assertNotIn("0.0", self.text())
+
+    def test_a_new_python3_on_path_is_enough_even_from_an_old_setup_run(self):
+        self.run_setup(checks=dict(READY, python3=(3, 15)), version=(3, 9))
+        self.assertNotIn("Install Python", self.text())
+
     def test_a_ready_mac_on_311_gets_no_install_steps(self):
         self.run_setup()
         self.run_setup()

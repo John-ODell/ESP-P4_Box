@@ -161,13 +161,13 @@ def setup(env: Path, example: Path, *, yes: bool = False, remote: bool = True, s
         out("  Other devices off; only this Mac can send AI notifications")
 
     steps = []
-    oldest = min(version, checks.get("python3", version))  # this Python, and `python3` the next steps will run
+    oldest = checks.get("python3", version)  # `python3` on PATH is what the next steps run
     if not checks["brew"] and (oldest < (3, 11) or not checks["mosquitto"]):  # the steps below use brew
         steps.append("Install Homebrew, the Mac's package manager: https://brew.sh")
     if oldest < (3, 11):
-        steps.append(f"Install Python 3.11 or later (`python3` here is {oldest[0]}.{oldest[1]}; the bridge and "
-                     "connect.py need 3.11): `brew install python`, then open a new terminal so `python3` is the new "
-                     "one.")
+        found = f"`python3` here is {oldest[0]}.{oldest[1]}" if oldest > (0, 0) else "there is no `python3` here"
+        steps.append(f"Install Python 3.11 or later ({found}; the bridge and connect.py need 3.11): "
+                     "`brew install python`, then open a new terminal so `python3` is the new one.")
     if not checks["venv"]:
         steps.append("cd bridge && python3 -m venv .venv && .venv/bin/pip install paho-mqtt && cd ..")
     if not checks["mosquitto"]:

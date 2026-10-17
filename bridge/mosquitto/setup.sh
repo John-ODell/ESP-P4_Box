@@ -6,8 +6,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 ENV_FILE="$REPO/bridge/.env"
 [ -f "$ENV_FILE" ] || { echo "missing $ENV_FILE (run: python3 bridge/setup.py)"; exit 1; }
-# As the bridge reads .env (load_dotenv): the first line for a key wins, one pair of quotes is dropped.
-value() { sed -n "s/^$1=//p" "$ENV_FILE" | head -1 | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//'; }
+# As the bridge reads .env (load_dotenv): the first line for a key wins, one pair of quotes and any CR dropped.
+value() { tr -d '\r' < "$ENV_FILE" | sed -n "s/^$1=//p" | head -1 | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//'; }
 MQTT_USER=$(value MQTT_USER)
 MQTT_PASS=$(value MQTT_PASS)
 [ -n "$MQTT_USER" ] && [ -n "$MQTT_PASS" ] || { echo "MQTT_USER / MQTT_PASS not set in $ENV_FILE"; exit 1; }

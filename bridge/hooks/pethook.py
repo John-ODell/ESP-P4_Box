@@ -92,7 +92,7 @@ def read_stdin_json():
     try:  # bytes, decoded as UTF-8 whatever the console code page (Windows reads stdin as cp1252 otherwise)
         stream = getattr(sys.stdin, "buffer", sys.stdin)
         data = stream.read()
-        payload = json.loads(data.decode("utf-8", "replace") if isinstance(data, bytes) else data)
+        payload = json.loads(data.decode("utf-8-sig", "replace") if isinstance(data, bytes) else data)
     except (ValueError, OSError):
         return None
     return payload if isinstance(payload, dict) else None

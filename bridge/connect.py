@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Connect the AI tools on this computer (macOS or Windows) to the desk pet, the way `goose configure` or `ollama launch` offers integrations.
+"""Connect the AI tools on this computer (macOS or Windows) to the desk pet, the way `goose configure` offers its
+integrations. On Windows, `py bridge\\connect.py ...` in place of `python3 bridge/connect.py ...`.
 
     python3 bridge/connect.py                      menu: what is found, what is connected; pick to connect or undo
     python3 bridge/connect.py --status             the table only
@@ -74,23 +75,33 @@ def short_path(path: str) -> str:
     return buf.value if 0 < n < len(buf) else path
 
 
+def checkout(repo: Path) -> str:
+    """The checkout's absolute path, as Windows writes it."""
+    return str(repo.resolve())
+
+
+def hook_script(repo: Path, name: str) -> str:
+    """A hook script's absolute path on Windows, with backslashes."""
+    return str(PureWindowsPath(checkout(repo)) / "bridge" / "hooks" / name)
+
+
 def hook_command(repo: Path, home: Path, name: str, quotes: bool = True) -> str:
     """The shell line that runs a hook script.
 
     macOS: python3 "$HOME/...", as in hooks/README.md. Windows (#39): the Python running this script and the hook by
-    absolute path, since python3 is often missing there. With `quotes`, both quoted and with forward slashes, which
-    Git Bash and `cmd /c "..."` both run (Claude Code, Aider). Without, for Goose, whose `cmd /C` goes through Rust's
-    argument quoting and breaks on any quote in the line: backslashes, no quotes, and so no spaces (8.3 names stand
-    in where Windows has them)."""
+    absolute path, since python3 is often missing there. With `quotes` (Aider, whose `shell=True` is `cmd /c "..."`):
+    both quoted, with forward slashes. Without (Goose, whose `cmd /C` goes through Rust's argument quoting and breaks
+    on any quote in the line): backslashes, no quotes, and so no spaces; 8.3 names stand in for the Python and the
+    checkout folder where Windows has them, and bridge\\hooks\\<name> stays readable so the hook is still ours."""
     if not on_windows():
         return f"python3 {script_ref(repo, home, name)}"
-    paths = [sys.executable, str(repo.resolve() / "bridge" / "hooks" / name)]
     if quotes:
-        words = [PureWindowsPath(x).as_posix() for x in paths]
+        words = [PureWindowsPath(sys.executable).as_posix(), PureWindowsPath(hook_script(repo, name)).as_posix()]
         bad = '"%$`!^&|<>\n'
     else:
-        words = [str(PureWindowsPath(short_path(x))) for x in paths]
-        bad = ' "%&|<>^()\n'
+        base = PureWindowsPath(short_path(checkout(repo)))
+        words = [str(PureWindowsPath(short_path(sys.executable))), str(base / "bridge" / "hooks" / name)]
+        bad = ' "%&|<>^(),;=\n'
     for word in words:
         if any(c in word for c in bad):
             raise ConnectError(f"{word} has a space or a character the command line would misread; move it to a "
@@ -165,18 +176,24 @@ class ClaudeCode(Tool):
         return data
 
     def _ours(self, hook) -> bool:
-        return isinstance(hook, dict) and mentions(hook.get("command", ""), self.MARK)
+        if not isinstance(hook, dict):
+            return False
+        args = hook.get("args") if isinstance(hook.get("args"), list) else []
+        return any(mentions(x, self.MARK) for x in [hook.get("command", ""), *args])
 
     def _snippet(self) -> dict:
         return json.loads((self.repo / "bridge" / "hooks" / "claude-settings.json").read_text(encoding="utf-8"))
 
     def _wanted(self) -> dict:
         snippet = self._snippet()
-        command = hook_command(self.repo, self.home, "claude_hook.py") + quiet()
+        if on_windows():  # exec form: no shell, so neither Git Bash nor PowerShell has to parse a path
+            run = {"command": sys.executable, "args": [hook_script(self.repo, "claude_hook.py")]}
+        else:
+            run = {"command": hook_command(self.repo, self.home, "claude_hook.py") + quiet()}
         for groups in snippet["hooks"].values():
             for group in groups:
                 for hook in group["hooks"]:
-                    hook["command"] = command
+                    hook.update(run)
         return snippet["hooks"]
 
     def _has(self, groups, event: str) -> bool:
@@ -274,8 +291,10 @@ class CodexApp(Tool):
         if self.connected_in(text):
             return text
         old = self._notify(text)
-        script = self.repo / "bridge" / "hooks" / "codex_notify.py"
-        run = [sys.executable, str(script.resolve())] if on_windows() else ["python3", str(script)]  # no shell
+        if on_windows():  # no shell either way
+            run = [sys.executable, hook_script(self.repo, "codex_notify.py")]
+        else:
+            run = ["python3", str(self.repo / "bridge" / "hooks" / "codex_notify.py")]
         return self._with_notify(text, run + (["--then", *old] if old else []))
 
     def disconnect_text(self, text: str) -> str:

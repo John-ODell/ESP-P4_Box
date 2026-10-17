@@ -21,13 +21,18 @@ class WindowsTests(Home):
             self.addCleanup(patch.stop)
         self.hooks = (self.repo / "bridge" / "hooks").resolve().as_posix()
 
-    def test_claude_runs_this_python_and_the_hook_by_quoted_forward_slash_paths(self):
+    def checkout(self, path):
+        patch = mock.patch.object(connect, "checkout", lambda repo: path)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_claude_uses_exec_form_so_no_shell_parses_the_paths(self):
+        self.checkout(r"C:\Users\John Doe\ESP-P4_Box")
         tool = self.tool(connect.ClaudeCode)
         data = json.loads(tool.connect_text(""))
-        cmd = data["hooks"]["Stop"][0]["hooks"][0]["command"]
-        self.assertEqual(cmd, f'"C:/Users/John/AppData/Local/Programs/Python/Python313/python.exe" '
-                              f'"{self.hooks}/claude_hook.py"')
-        self.assertNotIn("/dev/null", cmd)  # cmd has no /dev/null and no `true`
+        hook = data["hooks"]["Stop"][0]["hooks"][0]
+        self.assertEqual(hook["command"], PYTHON)  # Git Bash or PowerShell never see it: there is no shell
+        self.assertEqual(hook["args"], [r"C:\Users\John Doe\ESP-P4_Box\bridge\hooks\claude_hook.py"])
         self.assertTrue(tool.connected_in(json.dumps(data)))
         self.assertFalse(tool.connected_in(tool.disconnect_text(json.dumps(data))))
 
@@ -53,20 +58,29 @@ class WindowsTests(Home):
         self.write("AppData/Roaming/Block/goose/config/config.yaml", "x: 1\n")
         self.assertEqual(tool.found(), "~/AppData/Roaming/Block/goose/config/config.yaml")
 
-    def test_goose_with_a_space_uses_the_short_name_or_refuses(self):
+    def test_goose_with_a_space_uses_short_names_and_stays_recognisably_ours(self):
         tool = self.tool(connect.Goose)
         spaced = r"C:\Program Files\Python313\python.exe"
+        self.checkout(r"C:\Users\John Doe\Desktop\ESP-P4_Box")
+        short = {spaced: r"C:\PROGRA~1\PYTHON~1\python.exe",
+                 r"C:\Users\John Doe\Desktop\ESP-P4_Box": r"C:\Users\JOHNDO~1\Desktop\ESP-P4~1"}
         with mock.patch.object(connect.sys, "executable", spaced):
-            with mock.patch.object(connect, "short_path", lambda p: r"C:\PROGRA~1\PYTHON~1\python.exe" if p == spaced
-                                   else p):
-                self.assertIn(r"C:\PROGRA~1\PYTHON~1\python.exe ", tool.connect_text(""))
+            with mock.patch.object(connect, "short_path", lambda p: short.get(p, p)):
+                text = tool.connect_text("")
+                self.assertIn(r"'C:\PROGRA~1\PYTHON~1\python.exe C:\Users\JOHNDO~1\Desktop\ESP-P4~1\bridge\hooks"
+                              r"\goose_hook.py'", text)
+                self.assertTrue(tool.connected_in(text))  # --status and a second connect still see it
+                self.assertEqual(tool.connect_text(text), text)
+                without_comment = text.replace("  " + connect.LineConfig.MARK, "")  # Goose rewrote the file
+                self.assertEqual(tool.disconnect_text(without_comment), "")
             with mock.patch.object(connect, "short_path", lambda p: p), self.assertRaises(connect.ConnectError):
                 tool.connect_text("")
 
     def test_aider_gets_the_quoted_form_without_the_sh_suffix(self):
+        self.checkout(r"C:\Users\John Doe\ESP-P4_Box")
         tool = self.tool(connect.Aider)
         text = tool.connect_text("")
-        self.assertIn(f'"{self.hooks}/aider_hook.py"', text)
+        self.assertIn('"C:/Users/John Doe/ESP-P4_Box/bridge/hooks/aider_hook.py"', text)
         self.assertNotIn("|| true", text)
         self.assertTrue(tool.connected_in(text))
 
@@ -75,7 +89,8 @@ class WindowsTests(Home):
         text = tool.connect_text('notify = ["C:\\\\Tools\\\\notifier.exe", "turn-ended"]\n')
         notify = tomllib.loads(text)["notify"]
         self.assertEqual(notify[0], PYTHON)
-        self.assertTrue(notify[1].endswith("bridge/hooks/codex_notify.py"))
+        self.assertTrue(notify[1].endswith(r"bridge\hooks\codex_notify.py"))
+        self.assertTrue(tool.connected_in(text))
         self.assertEqual(notify[2:], ["--then", r"C:\Tools\notifier.exe", "turn-ended"])
         backslashed = 'notify = ["C:\\\\py.exe", "C:\\\\x\\\\bridge\\\\hooks\\\\codex_notify.py"]\n'
         self.assertTrue(tool.connected_in(backslashed))
@@ -83,7 +98,7 @@ class WindowsTests(Home):
     def test_a_percent_or_quote_in_a_path_is_refused_not_guessed_at(self):
         with mock.patch.object(connect.sys, "executable", r"C:\Users\100%\python.exe"):
             with self.assertRaises(connect.ConnectError):
-                self.tool(connect.ClaudeCode).connect_text("")
+                self.tool(connect.Aider).connect_text("")  # through cmd /c, where %...% expands
 
     def test_main_connects_on_windows_without_python3_anywhere(self):
         self.write(".claude/settings.json", "{}")

@@ -148,6 +148,38 @@ how many. `--once` and `--state-file` runs never start the notifier and touch ne
 `GET http://127.0.0.1:8765/pending` shows what is waiting. Senders with native hooks (Claude Code, Codex) and the
 box's rendering are separate units: issues #5 and #6.
 
+### From your other machines, over Tailscale
+
+The endpoint above answers this Mac only. To let AI sessions on your other personal machines reach the pet, put this
+Mac on Tailscale and set in `.env`:
+
+```bash
+PET_TAILNET=on
+PET_TAILNET_TOKEN=<32+ random characters: python3 -c "import secrets; print(secrets.token_urlsafe(32))">
+```
+
+The bridge then also listens on this Mac's own Tailscale address, which it finds with `tailscale ip -4` (set
+`PET_TAILNET_HOST` to override), and keeps retrying until Tailscale is up. It is safe by default:
+
+- It never listens on 0.0.0.0 or the home Wi-Fi address, and it does not start at all without a long token.
+- Every request there needs `Authorization: Bearer <token>` and a Tailscale source address; others get 401 or 403
+  and a log line.
+- Tailscale encrypts the traffic, but only while Tailscale is on at both ends. Use the Mac's MagicDNS name
+  (`johns-macbook-pro.<tailnet>.ts.net`), not its 100.x address: with Tailscale off on the sending machine that name
+  usually does not resolve, so nothing is sent, where a raw address would go out unencrypted on whatever network it is on.
+- The loopback endpoint is unchanged, so hooks on this Mac need no token.
+
+On another machine, the hooks and `notify.py` read the address and token from `PET_NOTIFY_URL` and
+`PET_NOTIFY_TOKEN`, or from `~/.config/desk-pet/bridge.json`:
+
+```json
+{"url": "http://johns-macbook-pro.<tailnet>.ts.net:8765/event", "token": "<the token>"}
+```
+
+Keep that file private (`chmod 600`). Writing it and the setup are being folded into `connect.py` (#38) and a
+first-time setup command (#40). The box itself keeps using this Mac's broker on the home Wi-Fi: the ESP32 cannot
+run Tailscale.
+
 ## Known limits
 
 - GitHub only breaks down contributions the token can see. Private-repo activity the API calls "restricted" arrives as

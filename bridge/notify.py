@@ -6,16 +6,22 @@
     python3 bridge/notify.py --source claude --kind cleared --session website
 
 kind: needs_input, done or error show on the box; cleared takes the session's bubble away.
-The bridge's address comes from --url or PET_NOTIFY_URL (default http://127.0.0.1:8765/event).
+The bridge's address comes from --url, PET_NOTIFY_URL, or ~/.config/desk-pet/bridge.json (written by connect.py on a
+machine that posts to the home Mac over Tailscale), else http://127.0.0.1:8765/event. A token for the tailnet
+endpoint comes from --token, PET_NOTIFY_TOKEN or that file.
 Always exits 0, even on a bad option, and gives up after two seconds, so a hook that calls it never blocks its
 tool. Proxy settings in the environment are ignored: the bridge is on this machine.
 """
 import argparse
+import http.client
 import json
 import os
 import sys
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "hooks"))
+import pethook  # noqa: E402  (the shared address and token lookup)
 
 
 def main() -> int:
@@ -25,7 +31,9 @@ def main() -> int:
     ap.add_argument("--session", required=True, help="the session name shown on the box")
     ap.add_argument("--title", default="", help="one line, 80 characters")
     ap.add_argument("--detail", default="", help="one line, 200 characters")
-    ap.add_argument("--url", default=os.environ.get("PET_NOTIFY_URL", "http://127.0.0.1:8765/event"))
+    url, token = pethook.target()
+    ap.add_argument("--url", default=url)
+    ap.add_argument("--token", default=token, help="bearer token for the tailnet endpoint")
     ap.add_argument("--timeout", type=float, default=2.0)
     ap.add_argument("--quiet", action="store_true", help="say nothing even when the bridge is unreachable")
     try:
@@ -34,16 +42,18 @@ def main() -> int:
         return 0
     body = json.dumps({"v": 1, "source": a.source, "kind": a.kind, "session": a.session,
                        "title": a.title, "detail": a.detail}).encode()
-    req = urllib.request.Request(a.url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-    local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    headers = {"Content-Type": "application/json"}
+    if a.token and (a.url == url or a.token != token):  # never send the configured token to a different --url
+        headers["Authorization"] = f"Bearer {a.token}"
+    req = urllib.request.Request(a.url, data=body, headers=headers, method="POST")
     try:
-        with local.open(req, timeout=a.timeout) as resp:
+        with pethook.opener().open(req, timeout=a.timeout) as resp:
             resp.read()
     except urllib.error.HTTPError as exc:
         if not a.quiet:
             print(f"notify: the bridge rejected the event ({exc.code}): "
                   f"{exc.read().decode(errors='replace')[:200]}", file=sys.stderr)
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as exc:  # ValueError: a bad URL
         if not a.quiet:
             print(f"notify: bridge not reachable at {a.url}: {exc}", file=sys.stderr)
     return 0

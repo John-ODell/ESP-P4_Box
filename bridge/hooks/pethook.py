@@ -3,6 +3,8 @@
 Each script puts its own folder on sys.path and imports this, so the three of them stay single-purpose and the
 bridge's Python package is not needed on the hook's import path.
 """
+from __future__ import annotations
+
 import http.client
 import json
 import os
@@ -10,7 +12,28 @@ import sys
 import urllib.error
 import urllib.request
 
-URL = os.environ.get("PET_NOTIFY_URL", "http://127.0.0.1:8765/event")
+DEFAULT_URL = "http://127.0.0.1:8765/event"
+CONFIG = os.path.join(os.path.expanduser("~"), ".config", "desk-pet", "bridge.json")
+
+
+def target(environ=os.environ, config: str = CONFIG):
+    """(url, token) for the bridge. PET_NOTIFY_URL and PET_NOTIFY_TOKEN win; else the file connect.py writes on a
+    machine that posts to the home Mac over Tailscale ({"url": ..., "token": ...}); else this machine's loopback
+    endpoint, which needs no token. A token is sent only with the URL it came with."""
+    if environ.get("PET_NOTIFY_URL"):
+        return environ["PET_NOTIFY_URL"], environ.get("PET_NOTIFY_TOKEN", "")
+    try:
+        with open(config, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("url"), str) and data["url"]:
+            token = data.get("token")
+            return data["url"], token if isinstance(token, str) else ""
+    except (OSError, ValueError):
+        pass
+    return DEFAULT_URL, ""
+
+
+URL, TOKEN = target()
 TIMEOUT = 1.0  # seconds; localhost answers in milliseconds, and a hook must never hold a session
 
 
@@ -34,14 +57,32 @@ def folder_name(cwd, fallback: str) -> str:
     return fallback
 
 
-def post(event: dict, url: str = URL, timeout: float = TIMEOUT) -> bool:
-    """POST one event to the bridge. False, never an exception, when it is not reachable, sick or says no."""
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # a 3xx is a refusal, not a new address: the token must never follow it to another host
+
+
+def opener():
+    """urllib with no proxy (the bridge is this machine or a tailnet peer) and no redirects."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+
+
+def post(event: dict, url: str | None = None, timeout: float = TIMEOUT, token: str = "") -> bool:
+    """POST one event to the bridge. False, never an exception, when it is not reachable, sick or says no. With no
+    `url`, the configured bridge and its token (target())."""
+    if url is None:
+        url, token = URL, TOKEN
     body = json.dumps(event).encode()
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-    local = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # the bridge is on this machine
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with local.open(req, timeout=timeout) as resp:  # the body is not needed, and reading it would wait on it
+        with opener().open(req, timeout=timeout) as resp:  # the body is not needed, and reading it would wait on it
             return 200 <= resp.status < 300
+    except urllib.error.HTTPError as e:  # a 4xx, 5xx or refused redirect
+        e.close()
+        return False
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
         return False
 

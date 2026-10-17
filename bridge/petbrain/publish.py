@@ -28,6 +28,7 @@ import paho.mqtt.client as mqtt
 
 from .brain import compute_state
 from .github_source import fetch_days, load_dotenv
+from . import tailnet
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,6 +50,9 @@ def config() -> dict:
         "goal": int(os.environ.get("PET_GOAL", "20")),
         "http_host": os.environ.get("PET_HTTP_HOST", "127.0.0.1"),
         "http_port": int(os.environ.get("PET_HTTP_PORT", "8765")),
+        "tailnet": os.environ.get("PET_TAILNET", ""),
+        "tailnet_host": os.environ.get("PET_TAILNET_HOST", ""),
+        "tailnet_token": os.environ.get("PET_TAILNET_TOKEN", ""),
     }
 
 
@@ -118,6 +122,7 @@ def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier:
     notifier.publish_pending()  # what survived the restart, or the empty list: either way the box hears the truth
     serve_in_thread(server)
     log.info("notify endpoint: POST http://%s:%d/event", cfg["http_host"], cfg["http_port"])
+    tailnet.start(cfg, notifier)  # only when PET_TAILNET=on and a long token is set; see petbrain/tailnet.py
     return notifier
 
 

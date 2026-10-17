@@ -132,10 +132,19 @@ class SetupTests(unittest.TestCase):
 
     def test_missing_pieces_become_numbered_next_steps(self):
         self.run_setup(checks=dict.fromkeys(READY, False), version=(3, 9))
-        for step in ("Python 3.11 or later (this is 3.9", "https://brew.sh", "python3 -m venv .venv",
+        for step in ("Python 3.11 or later (`python3` here is 3.9", "https://brew.sh", "python3 -m venv .venv",
                      "brew install mosquitto", "bridge/mosquitto/setup.sh", "cp projects/pet/main/secrets.h.example",
                      "bridge/mosquitto/run.sh", "-m petbrain.publish", f"from {pet_setup.REPO}"):
             self.assertIn(step, self.text())
+
+    def test_homebrew_comes_before_the_steps_that_use_it(self):
+        self.run_setup(checks=dict(READY, brew=False), version=(3, 9))
+        text = self.text()
+        self.assertLess(text.index("https://brew.sh"), text.index("brew install python"))
+
+    def test_an_old_python3_on_path_counts_even_when_setup_ran_on_a_new_one(self):
+        self.run_setup(checks=dict(READY, python3=(3, 9)), version=(3, 12))
+        self.assertIn("`python3` here is 3.9", self.text())
 
     def test_a_ready_mac_on_311_gets_no_install_steps(self):
         self.run_setup()

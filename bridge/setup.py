@@ -16,6 +16,7 @@ import ipaddress
 import os
 import secrets
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Callable
@@ -160,11 +161,13 @@ def setup(env: Path, example: Path, *, yes: bool = False, remote: bool = True, s
         out("  Other devices off; only this Mac can send AI notifications")
 
     steps = []
-    if version < (3, 11):
-        steps.append(f"Install Python 3.11 or later (this is {version[0]}.{version[1]}; the bridge and connect.py "
-                     "need 3.11): `brew install python`, then open a new terminal so `python3` is the new one.")
-    if not checks["brew"] and not checks["mosquitto"]:
+    oldest = min(version, checks.get("python3", version))  # this Python, and `python3` the next steps will run
+    if not checks["brew"] and (oldest < (3, 11) or not checks["mosquitto"]):  # the steps below use brew
         steps.append("Install Homebrew, the Mac's package manager: https://brew.sh")
+    if oldest < (3, 11):
+        steps.append(f"Install Python 3.11 or later (`python3` here is {oldest[0]}.{oldest[1]}; the bridge and "
+                     "connect.py need 3.11): `brew install python`, then open a new terminal so `python3` is the new "
+                     "one.")
     if not checks["venv"]:
         steps.append("cd bridge && python3 -m venv .venv && .venv/bin/pip install paho-mqtt && cd ..")
     if not checks["mosquitto"]:
@@ -190,8 +193,21 @@ def setup(env: Path, example: Path, *, yes: bool = False, remote: bool = True, s
     return 0
 
 
+def python3_version() -> tuple:
+    """The version of `python3` on PATH, which the printed next steps run; (0, 0) when there is none."""
+    path = shutil.which("python3")
+    if not path:
+        return (0, 0)
+    try:
+        out = subprocess.run([path, "-c", "import sys; print('%d %d' % sys.version_info[:2])"], capture_output=True,
+                             text=True, timeout=10).stdout.split()
+        return (int(out[0]), int(out[1]))
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return (0, 0)
+
+
 def default_checks() -> dict:
-    return {"venv": (BRIDGE / ".venv").is_dir(), "mosquitto": bool(shutil.which("mosquitto")),
+    return {"python3": python3_version(), "venv": (BRIDGE / ".venv").is_dir(), "mosquitto": bool(shutil.which("mosquitto")),
             "passwd": (BRIDGE / "mosquitto" / "passwd").is_file(), "brew": bool(shutil.which("brew")),
             "secrets_h": (REPO / "projects" / "pet" / "main" / "secrets.h").is_file()}
 

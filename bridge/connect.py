@@ -3,7 +3,11 @@
 
     python3 bridge/connect.py                      menu: what is found, what is connected; pick to connect or undo
     python3 bridge/connect.py --status             the table only
+<<<<<<< HEAD
     python3 bridge/connect.py --connect claude codex goose aider [--yes]
+=======
+    python3 bridge/connect.py --connect claude codex [--yes]
+>>>>>>> origin/main
     python3 bridge/connect.py --disconnect codex [--yes]
     --repo PATH                                    point the hooks at another checkout (default: this one)
 
@@ -28,6 +32,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 BRIDGE = os.environ.get("PET_NOTIFY_URL", "http://127.0.0.1:8765/event").rsplit("/", 1)[0]
 LATER = [  # tools the pet knows but cannot connect yet: (label, how to tell it is here, note)
+<<<<<<< HEAD
+=======
+    ("Goose", "goose", "connector coming in #31"),
+    ("Aider", "aider", "connector coming in #31"),
+>>>>>>> origin/main
     ("Ollama", "ollama", "model server: its sessions show through the tool that drives it (Goose, Aider, "
                          "`ollama launch claude`); direct use is #32"),
 ]
@@ -49,7 +58,11 @@ def script_ref(repo: Path, home: Path, name: str) -> str:
 
 
 class Tool:
+<<<<<<< HEAD
     key = label = script = ""  # script: the hook in bridge/hooks/ the tool will run
+=======
+    key = label = ""
+>>>>>>> origin/main
 
     def __init__(self, home: Path | None = None, repo: Path = REPO):
         self.home = home or Path.home()
@@ -80,7 +93,11 @@ class Tool:
 
 class ClaudeCode(Tool):
     """Merges the three hook groups of hooks/claude-settings.json into ~/.claude/settings.json."""
+<<<<<<< HEAD
     key, label, script = "claude", "Claude Code", "claude_hook.py"
+=======
+    key, label = "claude", "Claude Code"
+>>>>>>> origin/main
     MARK = "bridge/hooks/claude_hook.py"
 
     def path(self) -> Path:
@@ -163,7 +180,11 @@ class ClaudeCode(Tool):
 class CodexApp(Tool):
     """Puts codex_notify.py in front of the `notify` command in ~/.codex/config.toml and keeps the old one after
     --then, so whatever notify ran before (the Codex app sets its own) still runs with the same payload."""
+<<<<<<< HEAD
     key, label, script = "codex", "Codex", "codex_notify.py"
+=======
+    key, label = "codex", "Codex"
+>>>>>>> origin/main
     MARK = "bridge/hooks/codex_notify.py"
 
     def path(self) -> Path:
@@ -221,6 +242,7 @@ class CodexApp(Tool):
         return self._with_notify(text, rest or None)
 
 
+<<<<<<< HEAD
 class LineConfig(Tool):
     """A YAML settings file edited one top-level `key: value` line at a time, the only edit Goose and Aider need, so no
     YAML library is required. Lines added here end with MARK; disconnect drops those and any KEY line naming SCRIPT."""
@@ -318,6 +340,10 @@ class Aider(LineConfig):
 
 def tools(home: Path | None = None, repo: Path = REPO) -> list[Tool]:
     return [ClaudeCode(home, repo), CodexApp(home, repo), Goose(home, repo), Aider(home, repo)]
+=======
+def tools(home: Path | None = None, repo: Path = REPO) -> list[Tool]:
+    return [ClaudeCode(home, repo), CodexApp(home, repo)]
+>>>>>>> origin/main
 
 
 def bridge_state() -> str:
@@ -354,10 +380,13 @@ def show(items: list[Tool], out=print) -> None:
 def change(tool: Tool, connect: bool, yes: bool, out=print, ask=input) -> bool:
     """Show the edit, ask, back up, write, read back. True when the tool ends up in the asked-for state."""
     path = tool.path()
+<<<<<<< HEAD
     hook = tool.repo / "bridge" / "hooks" / tool.script
     if connect and not hook.is_file():
         out(f"{tool.label}: {hook} is not there; pull main in that checkout or pass --repo.")
         return False
+=======
+>>>>>>> origin/main
     old = tool.read()
     try:
         new = tool.connect_text(old) if connect else tool.disconnect_text(old)
@@ -403,7 +432,11 @@ def main(argv=None, home: Path | None = None, out=print, ask=input) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--status", action="store_true", help="print the table and stop")
     action = parser.add_mutually_exclusive_group()
+<<<<<<< HEAD
     action.add_argument("--connect", nargs="+", metavar="TOOL", help="connect these (claude, codex, goose, aider)")
+=======
+    action.add_argument("--connect", nargs="+", metavar="TOOL", help="connect these (claude, codex)")
+>>>>>>> origin/main
     action.add_argument("--disconnect", nargs="+", metavar="TOOL", help="remove what --connect added")
     parser.add_argument("--yes", action="store_true", help="write without asking; the diff is still printed")
     parser.add_argument("--repo", type=Path, default=REPO, help="checkout the hooks run from (default: this one)")

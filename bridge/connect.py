@@ -607,7 +607,7 @@ def read_env(path: Path) -> dict:
         for line in path.read_text(encoding="utf-8").splitlines():
             key, sep, value = line.partition("=")
             if sep and not key.strip().startswith("#"):
-                values[key.strip()] = value.strip().strip('"').strip("'")  # as the bridge reads it
+                values.setdefault(key.strip(), value.strip().strip('"').strip("'"))  # as load_dotenv: first wins
     return values
 
 

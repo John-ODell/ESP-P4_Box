@@ -51,7 +51,7 @@ The last line should put a bubble on the box. `python3` is often missing on Wind
 the Python that ran `connect.py` (run it with the system Python, not from a venv, or that venv gets baked in) and the
 script by absolute path, in the form each tool's runner takes:
 
-- Claude Code: exec form, `"command"` set to the `python.exe` path and `"args"` to the hook script's path. Claude Code
+- Claude Code: exec form, `"command"` set to `C:/.../python.exe` and `"args"` to the hook script's path. Claude Code
   spawns that with no shell; in shell form it would use Git Bash, or PowerShell without Git Bash, and no one line
   parses in both. Exec form needs a recent Claude Code (one whose hook docs list `args`).
 - Aider: `"C:/.../python.exe" "C:/.../bridge/hooks/aider_hook.py"`, quoted with forward slashes; Aider runs it with

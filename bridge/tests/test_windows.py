@@ -31,8 +31,8 @@ class WindowsTests(Home):
         tool = self.tool(connect.ClaudeCode)
         data = json.loads(tool.connect_text(""))
         hook = data["hooks"]["Stop"][0]["hooks"][0]
-        self.assertEqual(hook["command"], PYTHON)  # Git Bash or PowerShell never see it: there is no shell
-        self.assertEqual(hook["args"], [r"C:\Users\John Doe\ESP-P4_Box\bridge\hooks\claude_hook.py"])
+        self.assertEqual(hook["command"], PYTHON.replace("\\", "/"))  # no shell: Git Bash or PowerShell never see it
+        self.assertEqual(hook["args"], ["C:/Users/John Doe/ESP-P4_Box/bridge/hooks/claude_hook.py"])
         self.assertTrue(tool.connected_in(json.dumps(data)))
         self.assertFalse(tool.connected_in(tool.disconnect_text(json.dumps(data))))
 

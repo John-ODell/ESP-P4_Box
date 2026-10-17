@@ -187,7 +187,8 @@ class ClaudeCode(Tool):
     def _wanted(self) -> dict:
         snippet = self._snippet()
         if on_windows():  # exec form: no shell, so neither Git Bash nor PowerShell has to parse a path
-            run = {"command": sys.executable, "args": [hook_script(self.repo, "claude_hook.py")]}
+            run = {"command": PureWindowsPath(sys.executable).as_posix(),  # forward slashes: nothing to unescape
+                   "args": [PureWindowsPath(hook_script(self.repo, "claude_hook.py")).as_posix()]}
         else:
             run = {"command": hook_command(self.repo, self.home, "claude_hook.py") + quiet()}
         for groups in snippet["hooks"].values():

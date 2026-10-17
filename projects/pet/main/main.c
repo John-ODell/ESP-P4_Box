@@ -16,6 +16,7 @@
 #include "face.h"
 #include "net.h"
 #include "mqtt_link.h"
+#include "settings.h"
 #include "ota.h"
 #include "pet_state.h"
 #include "pet_notify.h"
@@ -25,6 +26,7 @@
 static const char *TAG = "pet";
 static int s_taps;
 static bool s_wifi_up, s_mqtt_up;
+static bool s_wifi_set_up, s_mqtt_set_up; /* false: nothing saved or built in, so the box waits for setup (#50) */
 static pet_state_t s_state;
 static pet_notify_t s_notify;   /* the waiting sessions, newest first; touched only with the display lock held */
 static pet_notice_t s_top_seen; /* the newest entry ever on top of the list, same lock; later than it is news */
@@ -182,7 +184,11 @@ static const char *reset_reason_name(void)
 
 static void refresh_link_line(void)
 {
-    const char *txt = !s_wifi_up ? "wifi: connecting" : (s_mqtt_up ? "wifi + mqtt ok" : "wifi ok, mqtt: connecting");
+    const char *txt = !s_wifi_set_up ? "not set up: wifi"
+                      : !s_wifi_up   ? "wifi: connecting"
+                      : !s_mqtt_set_up ? "wifi ok, not set up: bridge"
+                      : s_mqtt_up    ? "wifi + mqtt ok"
+                                     : "wifi ok, mqtt: connecting";
     if (bsp_display_lock(200)) {
         face_set_link(txt);
         bsp_display_unlock();
@@ -327,11 +333,21 @@ void app_main(void)
     bsp_display_unlock();
     ESP_LOGI(TAG, "face ready");
 
-    ESP_ERROR_CHECK(net_start(on_net));
-    if (!net_wait_ip(30000)) {
+    pet_settings_t settings;
+    settings_load(&settings);
+    s_wifi_set_up = settings.wifi_src != SETTINGS_NONE;
+    s_mqtt_set_up = settings.mqtt_src != SETTINGS_NONE;
+    ESP_ERROR_CHECK(net_start(&settings, on_net));
+    if (s_wifi_set_up && !net_wait_ip(30000)) {
         ESP_LOGW(TAG, "no IP after 30 s; starting MQTT anyway, it will retry");
     }
-    ESP_ERROR_CHECK(mqtt_link_start(on_mqtt_msg, on_mqtt_status));
+    if (s_mqtt_set_up) {
+        ESP_ERROR_CHECK(mqtt_link_start(&settings, on_mqtt_msg, on_mqtt_status));
+    } else {
+        ESP_LOGW(TAG, "no bridge address saved: MQTT not started");
+    }
+    refresh_link_line();
+    memset(&settings, 0, sizeof(settings)); /* mqtt_link and the Wi-Fi driver keep their own copies */
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(60000));

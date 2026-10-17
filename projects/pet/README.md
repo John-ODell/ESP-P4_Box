@@ -50,8 +50,11 @@ like any other and acknowledges it; the same when the box holds only one of seve
 and the line then reads just `1 of 3 waiting`. The stats overlay draws over the bubble: while it is up, a tap anywhere,
 bubble included, closes it and acknowledges the session shown, as before.
 
-Before building, copy `main/secrets.h.example` to `main/secrets.h` (gitignored) and fill in the 2.4 GHz SSID and
-password, the Mac's IP, and the MQTT user/password from `bridge/.env`.
+The box keeps its Wi-Fi and bridge settings in NVS (`main/settings.c`, #50), so the same image works on any box and
+is set up after flashing. A box with nothing saved shows `not set up` in the bottom-right corner. For your own dev
+builds, `main/secrets.h` (gitignored) is optional: copy `main/secrets.h.example`, fill in the 2.4 GHz SSID and password,
+the Mac's IP, and the MQTT user/password from `bridge/.env`, and the box uses those values for any group NVS does not
+hold. The build works without the file.
 
 ```bash
 source ~/esp/esp-idf/export.sh

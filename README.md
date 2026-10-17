@@ -70,7 +70,7 @@ Prerequisites: ESP-IDF v5.5.5 at `~/esp/esp-idf`, Homebrew, Python 3.11 or newer
 
 2. **Set up the bridge.** Install Mosquitto, create the venv, copy `bridge/.env.example` to `bridge/.env`, and run the broker setup script. Step by step in [bridge/README.md](bridge/README.md).
 
-3. **Fill in the box secrets.** Copy `projects/pet/main/secrets.h.example` to `secrets.h` and add your 2.4 GHz Wi-Fi, the Mac's LAN IP, and the MQTT login from `bridge/.env`. Both secret files are gitignored.
+3. **Fill in the box secrets (for a build from source).** Copy `projects/pet/main/secrets.h.example` to `secrets.h` and add your 2.4 GHz Wi-Fi, the Mac's LAN IP, and the MQTT login from `bridge/.env`. Both secret files are gitignored. The file is optional: without it the box builds and boots to `not set up`, and keeps settings saved on the box instead (#50).
 
 4. **Build and flash.**
 

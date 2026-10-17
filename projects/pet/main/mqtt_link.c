@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include "mqtt_link.h"
-#include "secrets.h"
 #include "mqtt_client.h"
 #include "esp_log.h"
 
@@ -12,6 +11,7 @@ static esp_mqtt_client_handle_t s_client;
 static mqtt_msg_cb_t s_on_msg;
 static mqtt_status_cb_t s_on_status;
 static volatile bool s_connected;
+static pet_settings_t s_cfg; /* the client is handed pointers into this, so it lives as long as the client */
 
 static void handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -19,7 +19,7 @@ static void handler(void *arg, esp_event_base_t base, int32_t id, void *data)
     switch ((esp_mqtt_event_id_t)id) {
     case MQTT_EVENT_CONNECTED:
         s_connected = true;
-        ESP_LOGI(TAG, "connected to %s", PET_MQTT_URI);
+        ESP_LOGI(TAG, "connected to %s", s_cfg.mqtt_uri);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_STATE, 1);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_EVENT, 1);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_NOTIFY, 1);
@@ -71,15 +71,16 @@ static void handler(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
-esp_err_t mqtt_link_start(mqtt_msg_cb_t on_msg, mqtt_status_cb_t on_status)
+esp_err_t mqtt_link_start(const pet_settings_t *settings, mqtt_msg_cb_t on_msg, mqtt_status_cb_t on_status)
 {
+    s_cfg = *settings;
     s_on_msg = on_msg;
     s_on_status = on_status;
     esp_mqtt_client_config_t cfg = {
-        .broker.address.uri = PET_MQTT_URI,
-        .credentials.username = PET_MQTT_USER,
+        .broker.address.uri = s_cfg.mqtt_uri,
+        .credentials.username = s_cfg.mqtt_user,
         .credentials.client_id = "pet-box",
-        .credentials.authentication.password = PET_MQTT_PASS,
+        .credentials.authentication.password = s_cfg.mqtt_pass,
         .session.keepalive = 30,
         .network.reconnect_timeout_ms = 5000,
         .buffer.size = 4096,

@@ -30,7 +30,7 @@ class Home(unittest.TestCase):
         (self.repo / "bridge" / "hooks").mkdir(parents=True)
         src = BRIDGE / "hooks" / "claude-settings.json"
         (self.repo / "bridge" / "hooks" / "claude-settings.json").write_text(src.read_text())
-        for name in ("claude_hook.py", "codex_notify.py", "pethook.py"):
+        for name in ("claude_hook.py", "codex_notify.py", "pethook.py", "goose_hook.py", "aider_hook.py"):
             (self.repo / "bridge" / "hooks" / name).write_text("")
         self.out = []
 
@@ -140,7 +140,7 @@ class ChangeTests(Home):
         items = connect.tools(self.home, self.repo)
         for tool in items:
             tool.found = lambda: ""
-        self.assertEqual([connect.state(t) for t in items], ["not found", "not found"])
+        self.assertEqual([connect.state(t) for t in items], ["not found"] * 4)
         self.assertEqual(sorted(p.name for p in self.home.iterdir()), ["Desktop"])
 
     def test_main_refuses_a_repo_without_the_hooks(self):

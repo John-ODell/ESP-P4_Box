@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 BRIDGE = Path(__file__).resolve().parent
+REPO = BRIDGE.parent
 sys.path.insert(0, str(BRIDGE))
 from petbrain import tailnet  # noqa: E402  (standard library only: finds this Mac's Tailscale address)
 
@@ -28,18 +29,18 @@ DOWNLOAD = "https://tailscale.com/download"
 
 
 def get(lines: list[str], key: str) -> str | None:
-    """The last value set for `key` in .env lines (comments skipped), or None."""
-    value = None
+    """The value of `key` in .env lines as the bridge reads it (load_dotenv: the first line wins, quotes stripped),
+    or None when no line sets it."""
     for line in lines:
         name, sep, rest = line.partition("=")
         if sep and not name.strip().startswith("#") and name.strip() == key:
-            value = rest.strip()
-    return value
+            return rest.strip().strip('"').strip("'")
+    return None
 
 
 def put(lines: list[str], key: str, value: str) -> None:
-    """Set `key` on its last line, or append it; every other line, comments included, stays as it was."""
-    for i in reversed(range(len(lines))):
+    """Set `key` on the line the bridge reads (the first), or append it; every other line stays as it was."""
+    for i in range(len(lines)):
         name, sep, _ = lines[i].partition("=")
         if sep and not name.strip().startswith("#") and name.strip() == key:
             lines[i] = f"{key}={value}"
@@ -59,7 +60,9 @@ def loopback(host: str) -> bool:
 
 
 def write_private(path: Path, text: str) -> None:
-    """Write `text` to `path`, readable by its owner only from the first byte; replace atomically."""
+    """Write `text` to `path`, readable by its owner only from the first byte; replace atomically. A symlinked
+    .env is written where it points, so the link stays a link."""
+    path = path.resolve()
     tmp = path.with_name(path.name + ".setup-tmp")
     tmp.unlink(missing_ok=True)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -70,7 +73,8 @@ def write_private(path: Path, text: str) -> None:
 
 def setup(env: Path, example: Path, *, yes: bool = False, remote: bool = True, show: bool = False, out=print,
           ask=input, detect: Callable = tailnet.detect_ip, has_tailscale: Callable = installed,
-          new_secret: Callable = lambda: secrets.token_urlsafe(32), extra=None) -> int:
+          new_secret: Callable = lambda: secrets.token_urlsafe(32), extra=None,
+          version: tuple = sys.version_info[:2]) -> int:
     created = not env.exists()
     if created and not example.exists():
         out(f"{example} is missing; run this from an ESP-P4_Box checkout.")
@@ -78,8 +82,13 @@ def setup(env: Path, example: Path, *, yes: bool = False, remote: bool = True, s
     old = (example if created else env).read_text(encoding="utf-8")
     lines = old.splitlines()
     done, warn = [], []
+    checks = extra if extra is not None else default_checks()
     if created:
         done.append("Created bridge/.env from .env.example.")
+        if checks["passwd"]:
+            warn.append("The broker already has a password from an earlier setup. The new one below replaces it "
+                        "once you run bridge/mosquitto/setup.sh, and the box stops connecting until it is flashed "
+                        "with the new one.")
 
     mqtt_new = not get(lines, "MQTT_PASS")
     if mqtt_new:
@@ -126,8 +135,8 @@ def setup(env: Path, example: Path, *, yes: bool = False, remote: bool = True, s
                         "this again.")
 
     new = "\n".join(lines) + "\n"
-    changed = created or new != old
-    if changed:
+    changed = created or lines != old.splitlines()  # a value changed, so a running bridge must restart
+    if created or new != old:
         write_private(env, new)
     elif env.stat().st_mode & 0o077:
         env.chmod(0o600)
@@ -151,23 +160,31 @@ def setup(env: Path, example: Path, *, yes: bool = False, remote: bool = True, s
         out("  Other devices off; only this Mac can send AI notifications")
 
     steps = []
-    checks = extra if extra is not None else default_checks()
+    if version < (3, 11):
+        steps.append(f"Install Python 3.11 or later (this is {version[0]}.{version[1]}; the bridge and connect.py "
+                     "need 3.11): `brew install python`, then open a new terminal so `python3` is the new one.")
+    if not checks["brew"] and not checks["mosquitto"]:
+        steps.append("Install Homebrew, the Mac's package manager: https://brew.sh")
     if not checks["venv"]:
         steps.append("cd bridge && python3 -m venv .venv && .venv/bin/pip install paho-mqtt && cd ..")
     if not checks["mosquitto"]:
         steps.append("brew install mosquitto")
     if mqtt_new or not checks["passwd"]:
         steps.append("bridge/mosquitto/setup.sh     (gives the broker the MQTT password)")
-    if mqtt_new:
-        steps.append("Put the MQTT password in projects/pet/main/secrets.h as PET_MQTT_PASS and flash the box "
-                     "(`python3 bridge/setup.py --show-secrets` shows it).")
-    if changed and not created:
-        steps.append("Restart the bridge so it reads the new settings.")
+    if mqtt_new or not checks["secrets_h"]:
+        steps.append("Give the box its settings: cp projects/pet/main/secrets.h.example projects/pet/main/secrets.h, "
+                     "then fill in your 2.4 GHz Wi-Fi, this Mac's home network address, and the MQTT password "
+                     "(`python3 bridge/setup.py --show-secrets` shows it), and flash the box (notes/flashing.md).")
+    bridge = "cd bridge && .venv/bin/python -m petbrain.publish"
+    if created:
+        steps.append(f"Start the broker and the bridge: bridge/mosquitto/run.sh, and in a second terminal: {bridge}")
+    elif changed:
+        steps.append(f"Restart the bridge so it reads the new settings: stop it (Ctrl-C), then {bridge}")
     if on:
         steps.append("python3 bridge/connect.py --share     (prints the one line to run on each of your other machines)")
     steps.append("python3 bridge/connect.py     (connects this Mac's AI tools to the pet)")
     out("")
-    out("Next:")
+    out(f"Next, from {REPO}:")
     for n, step in enumerate(steps, 1):
         out(f"  {n}. {step}")
     return 0
@@ -175,7 +192,8 @@ def setup(env: Path, example: Path, *, yes: bool = False, remote: bool = True, s
 
 def default_checks() -> dict:
     return {"venv": (BRIDGE / ".venv").is_dir(), "mosquitto": bool(shutil.which("mosquitto")),
-            "passwd": (BRIDGE / "mosquitto" / "passwd").is_file()}
+            "passwd": (BRIDGE / "mosquitto" / "passwd").is_file(), "brew": bool(shutil.which("brew")),
+            "secrets_h": (REPO / "projects" / "pet" / "main" / "secrets.h").is_file()}
 
 
 def main(argv=None) -> int:

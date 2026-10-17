@@ -25,13 +25,15 @@ It writes `bridge/.env` with a strong MQTT password, keeps that file readable by
 Tailscale, offers to let your other devices reach the pet (with a strong secret token). If Tailscale is not installed
 it says what it is and where to get it, and leaves that off. It never prints a secret unless you pass
 `--show-secrets`, keeps every value you already set, and changes nothing on a second run. It ends with a numbered
-list of what is left, which on a new Mac is:
+list of what is left, run from the repo root. On a new Mac (with Homebrew, https://brew.sh) that is:
 
 ```bash
-brew install mosquitto
+brew install python mosquitto   # the Mac's own python3 is 3.9; the bridge and connect.py need 3.11+
 cd bridge && python3 -m venv .venv && .venv/bin/pip install paho-mqtt && cd ..
 bridge/mosquitto/setup.sh       # writes mosquitto/pet.conf and the password file from .env
 ```
+
+then the box's `secrets.h` and flashing (below), and starting the broker and the bridge (Run it).
 
 Put the same `MQTT_USER` / `MQTT_PASS` (`python3 bridge/setup.py --show-secrets`) and the Mac's LAN IP into
 `projects/pet/main/secrets.h` (see the `.example`). The Mac should have a DHCP reservation so the IP in `secrets.h`

@@ -10,7 +10,7 @@ spec = importlib.util.spec_from_file_location("pet_setup", BRIDGE / "setup.py")
 pet_setup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pet_setup)
 
-READY = {"venv": True, "mosquitto": True, "passwd": True}
+READY = {"venv": True, "mosquitto": True, "passwd": True, "brew": True, "secrets_h": True}
 
 
 class SetupTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class SetupTests(unittest.TestCase):
             return value
         self.secret = secret
 
-    def run_setup(self, ip="100.79.52.11", answer="y", has=True, checks=READY, **kw):
+    def run_setup(self, ip="100.79.52.11", answer="y", has=True, checks=READY, version=(3, 14), **kw):
         def ask(prompt):
             self.asked.append(prompt)
             if isinstance(answer, BaseException):
@@ -38,7 +38,8 @@ class SetupTests(unittest.TestCase):
             return answer
         self.out.clear()
         return pet_setup.setup(self.env, self.example, out=self.out.append, ask=ask, detect=lambda: ip,
-                               has_tailscale=lambda: has, new_secret=self.secret, extra=checks, **kw)
+                               has_tailscale=lambda: has, new_secret=self.secret, extra=checks, version=version,
+                               **kw)
 
     def value(self, key):
         return pet_setup.get(self.env.read_text().splitlines(), key)
@@ -58,7 +59,7 @@ class SetupTests(unittest.TestCase):
             self.assertNotIn(s, self.text())
         self.assertIn("connect.py --share", self.text())
         self.assertIn("100.79.52.11", self.text())
-        self.assertIn("# Copy to bridge/.env", self.env.read_text())  # comments kept
+        self.assertIn("writes bridge/.env (gitignored)", self.env.read_text())  # comments kept
 
     def test_a_second_run_changes_nothing_and_asks_nothing(self):
         self.run_setup()
@@ -130,15 +131,59 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(self.value("PET_HTTP_HOST"), "0.0.0.0")  # flagged, not changed
 
     def test_missing_pieces_become_numbered_next_steps(self):
-        self.run_setup(checks={"venv": False, "mosquitto": False, "passwd": False})
-        for step in ("python3 -m venv .venv", "brew install mosquitto", "bridge/mosquitto/setup.sh", "secrets.h"):
+        self.run_setup(checks=dict.fromkeys(READY, False), version=(3, 9))
+        for step in ("Python 3.11 or later (this is 3.9", "https://brew.sh", "python3 -m venv .venv",
+                     "brew install mosquitto", "bridge/mosquitto/setup.sh", "cp projects/pet/main/secrets.h.example",
+                     "bridge/mosquitto/run.sh", "-m petbrain.publish", f"from {pet_setup.REPO}"):
             self.assertIn(step, self.text())
 
-    def test_put_and_get_respect_comments_and_the_last_line(self):
-        lines = ["# MQTT_PASS=not-this", "MQTT_PASS=a", "MQTT_PASS=b"]
-        self.assertEqual(pet_setup.get(lines, "MQTT_PASS"), "b")
+    def test_a_ready_mac_on_311_gets_no_install_steps(self):
+        self.run_setup()
+        self.run_setup()
+        for step in ("Python 3.11", "brew", "venv", "secrets.h", "setup.sh", "Restart"):
+            self.assertNotIn(step, self.text())
+
+    def test_a_changed_value_says_how_to_restart(self):
+        self.env.write_text("MQTT_PASS=p\n")
+        self.env.chmod(0o600)
+        self.run_setup()
+        self.assertIn("stop it (Ctrl-C), then cd bridge && .venv/bin/python -m petbrain.publish", self.text())
+
+    def test_only_a_missing_final_newline_is_not_a_change(self):
+        self.env.write_text("MQTT_USER=pet\nMQTT_PASS=p\nPET_TAILNET=off")
+        self.env.chmod(0o600)
+        self.run_setup(answer="n")
+        self.assertIn("Nothing to change", self.text())
+        self.assertNotIn("Restart", self.text())
+
+    def test_the_first_line_wins_as_in_the_bridge_and_quoted_empty_is_empty(self):
+        self.env.write_text('MQTT_PASS=""\nPET_TAILNET=off\nPET_TAILNET=on\n')
+        self.env.chmod(0o600)
+        self.run_setup(answer="n")
+        lines = self.env.read_text().splitlines()
+        self.assertGreaterEqual(len(self.value("MQTT_PASS")), 32)  # "" is no password; the bridge reads it as empty
+        self.assertTrue(lines[0].startswith("MQTT_PASS=secret"))
+        self.assertEqual(len(self.asked), 1)  # PET_TAILNET reads as off, as the bridge reads it
+        self.assertIn("Other devices off", self.text())
+
+    def test_a_new_env_next_to_an_old_broker_password_warns_about_the_box(self):
+        self.run_setup(checks=dict(READY, passwd=True))
+        self.assertIn("box stops connecting until it is flashed", self.text())
+
+    def test_a_symlinked_env_stays_a_link(self):
+        real = self.dir / "real.env"
+        real.write_text("PET_GOAL=30\n")
+        self.env.symlink_to(real)
+        self.run_setup()
+        self.assertTrue(self.env.is_symlink())
+        self.assertIn("PET_TAILNET=on", real.read_text())
+        self.assertEqual(stat.S_IMODE(real.stat().st_mode), 0o600)
+
+    def test_put_and_get_read_the_first_line_as_the_bridge_does(self):
+        lines = ["# MQTT_PASS=not-this", "MQTT_PASS='a'", "MQTT_PASS=b"]
+        self.assertEqual(pet_setup.get(lines, "MQTT_PASS"), "a")
         pet_setup.put(lines, "MQTT_PASS", "c")
-        self.assertEqual(lines, ["# MQTT_PASS=not-this", "MQTT_PASS=a", "MQTT_PASS=c"])
+        self.assertEqual(lines, ["# MQTT_PASS=not-this", "MQTT_PASS=c", "MQTT_PASS=b"])
         pet_setup.put(lines, "NEW", "1")
         self.assertEqual(lines[-1], "NEW=1")
 

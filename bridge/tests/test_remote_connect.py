@@ -159,6 +159,10 @@ class ShareTests(Home):
         self.assertEqual(connect.share(self.repo, self.out.append, name=lambda: "mac.tail1234.ts.net"), 0)
         self.assertIn(f"--bridge http://mac.tail1234.ts.net:9876/event --token {TOKEN}", "\n".join(self.out))
 
+    def test_the_first_of_two_lines_wins_as_in_the_bridge(self):
+        self.env(f"PET_TAILNET=off\nPET_TAILNET_TOKEN={TOKEN}\nPET_TAILNET=on\n")
+        self.assertEqual(connect.share(self.repo, self.out.append, name=lambda: "mac.ts.net"), 1)
+
     def test_prints_the_command_with_this_macs_name_port_and_token(self):
         self.env(f"# comment\nPET_TAILNET=on\nPET_TAILNET_TOKEN={TOKEN}\nPET_HTTP_PORT=9876\n")
         self.assertEqual(connect.share(self.repo, self.out.append, name=lambda: "mac.tail1234.ts.net"), 0)

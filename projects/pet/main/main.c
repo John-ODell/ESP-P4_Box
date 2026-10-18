@@ -41,7 +41,7 @@ static int64_t s_last_swipe_us;   /* when a swipe last toggled the stats, for PE
 static bool s_on_pet;             /* this press started on the pet */
 static bool s_petted;             /* ... and has stroked it at least once */
 static int s_stroke;              /* finger travel over the pet since the last heart */
-static int s_travel;              /* finger travel over the pet in this press */
+static int s_travel;              /* finger travel in this press, from a start on the pet */
 static lv_point_t s_last_pt;
 
 static const char *gesture_name(lv_dir_t d)
@@ -143,10 +143,10 @@ static void touch_event_cb(lv_event_t *e)
         if (s_on_pet && !menu_is_open()) {
             int step = abs((int)(p.x - s_last_pt.x)) + abs((int)(p.y - s_last_pt.y));
             if (step >= PET_STROKE_JITTER_PX) {   /* a resting finger's jitter is not a stroke */
-                if (face_point_on_pet(p)) {       /* count only travel over the pet itself */
+                if (face_point_on_pet(p)) {       /* hearts count only travel over the pet itself */
                     s_stroke += step;
-                    s_travel += step;
                 }
+                s_travel += step;                 /* a drag off the pet's edge is not a tap either */
                 s_last_pt = p;
             }
             if (s_travel >= PET_STROKE_TAP_PX) {

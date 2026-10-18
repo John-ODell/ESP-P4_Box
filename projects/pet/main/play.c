@@ -4,6 +4,7 @@
  * day its state was made (the date in its ts), so a retained or late state from yesterday gives no snacks; until the
  * clock is set and a total for today is in, play_snacks() is -1. Saved to NVS namespace
  * `pet_play` on feeding, at midnight, and at most every PET_PLAY_SAVE_MIN minutes for drift. */
+#include <stdio.h>
 #include <time.h>
 #include "play.h"
 #include "pet_config.h"

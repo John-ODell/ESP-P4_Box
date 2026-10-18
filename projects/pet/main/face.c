@@ -22,7 +22,7 @@ static const pet_def_t *s_pet;
 
 static const char *TAG = "face";
 static lv_obj_t *s_level, *s_xp_bar, *s_xp_text, *s_streak, *s_clock, *s_today, *s_mood, *s_link, *s_status, *s_banner;
-static lv_obj_t *s_stats, *s_stats_body, *s_stats_bar, *s_play_body;
+static lv_obj_t *s_stats, *s_stats_body, *s_stats_bar, *s_play_title, *s_play_body;
 static lv_obj_t *s_snack;          /* the falling fish while the pet is fed */
 static lv_timer_t *s_snack_timer;  /* steps through the pet's snack frames during the fall */
 static int s_snack_frame;
@@ -126,7 +126,7 @@ static void fill_play(void)
 {
     int snacks = play_snacks();
     if (snacks < 0) {
-        lv_label_set_text_fmt(s_play_body, "happiness  %d / 100\nsnacks  waiting for today's numbers",
+        lv_label_set_text_fmt(s_play_body, "happiness  %d / 100\nsnacks  waiting for the clock and today's numbers",
                               play_happiness());
     } else {
         lv_label_set_text_fmt(s_play_body, "happiness  %d / 100\nsnacks  %d left   %d eaten today", play_happiness(),
@@ -254,8 +254,8 @@ void face_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_label_set_long_mode(s_stats_body, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_line_space(s_stats_body, 10, 0);
     lv_label_set_text(s_stats_body, "no state from the bridge yet");
-    lv_obj_t *play_title = label(s_stats, &lv_font_montserrat_24, ACCENT_COLOR, LV_ALIGN_TOP_LEFT, 0, 312);
-    lv_label_set_text(play_title, "play");   /* the pet's own numbers, not from GitHub */
+    s_play_title = label(s_stats, &lv_font_montserrat_24, ACCENT_COLOR, LV_ALIGN_TOP_LEFT, 0, 312);
+    lv_label_set_text(s_play_title, "play");   /* the pet's own numbers, not from GitHub; follows the body down */
     s_play_body = label(s_stats, &lv_font_montserrat_24, INK_COLOR, LV_ALIGN_TOP_LEFT, 0, 352);
     lv_obj_set_style_text_line_space(s_play_body, 10, 0);
     fill_play();
@@ -283,6 +283,9 @@ static void fill_stats(const pet_state_t *s)
     int pct = s->xp_next > 0 ? (s->xp_into * 100) / s->xp_next : 0;
     lv_bar_set_value(s_stats_bar, pct > 100 ? 100 : pct, LV_ANIM_OFF);
     fill_play();   /* today's total sets the snacks */
+    lv_obj_update_layout(s_stats_body);   /* the body's new height, so the play section sits below it */
+    lv_obj_align_to(s_play_title, s_stats_body, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 19);
+    lv_obj_align_to(s_play_body, s_play_title, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 13);
 }
 
 static int mood_class(const pet_state_t *s)

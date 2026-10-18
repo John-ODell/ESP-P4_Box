@@ -16,6 +16,7 @@
 #include "bsp/display.h"
 #include "face.h"
 #include "menu.h"
+#include "says.h"
 #include "pet_pack.h"
 #include "play.h"
 #include "net.h"
@@ -399,6 +400,7 @@ void app_main(void)
     lv_obj_t *scr = lv_screen_active();
     face_create(scr, pet);
     menu_create(scr, pet);
+    says_create(scr, pet);   /* over the menu: the menu closes as the game opens */
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr, touch_event_cb, LV_EVENT_ALL, NULL);
     sched_start();

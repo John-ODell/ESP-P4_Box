@@ -1,9 +1,10 @@
 /* Play state (#63). Happiness drifts down one point every PET_HAPPY_DECAY_MIN awake minutes, never below
- * PET_HAPPY_FLOOR, and goes up with feeding, petting (less for each stroke in a row) and later Pet Says. Snacks left = today's contributions
- * minus snacks eaten today; the eaten count resets at local midnight once the clock is set. A total counts only on the
- * day its state was made (the date in its ts), so a retained or late state from yesterday gives no snacks; until the
- * clock is set and a total for today is in, play_snacks() is -1. Saved to NVS namespace
- * `pet_play` on feeding, at midnight, and at most every PET_PLAY_SAVE_MIN minutes for drift. */
+ * PET_HAPPY_FLOOR, and goes up with feeding, petting (less for each recent stroke) and Pet Says games. Snacks left =
+ * today's contributions minus snacks eaten today; the eaten count resets at local midnight once the clock is set. A
+ * total counts only on the day its state was made (the date in its ts), so a retained or late state from yesterday
+ * gives no snacks; until the clock is set and a total for today is in, play_snacks() is -1. Saved to NVS namespace
+ * `pet_play` on feeding, after each Pet Says game (with its best score), at midnight, and at most every
+ * PET_PLAY_SAVE_MIN minutes for drift. */
 #include <stdio.h>
 #include <time.h>
 #include "play.h"
@@ -20,6 +21,7 @@ static unsigned s_day;          /* YYYYMMDD of s_eaten, 0 until the clock is fir
 static int s_total = -1;        /* today.total from the bridge, -1 until the first state */
 static unsigned s_total_day;    /* YYYYMMDD the bridge made that total on */
 static int s_awake_min, s_since_save_min;
+static int s_best;              /* Pet Says best score */
 static int s_strokes;           /* recent strokes, at most what takes the gain to 0; each minute forgets two, so a
                                    few minutes' rest makes petting count again */
 static bool s_dirty;
@@ -37,6 +39,9 @@ static void save(const char *why)
             err = nvs_set_u32(h, "day", s_day);
         }
         if (err == ESP_OK) {
+            err = nvs_set_u16(h, "best", (uint16_t)s_best);
+        }
+        if (err == ESP_OK) {
             err = nvs_commit(h);
         }
         nvs_close(h);
@@ -47,7 +52,7 @@ static void save(const char *why)
     }
     s_dirty = false;
     s_since_save_min = 0;
-    ESP_LOGI(TAG, "saved (%s): happiness %d, eaten %d, day %u", why, s_happy, s_eaten, s_day);
+    ESP_LOGI(TAG, "saved (%s): happiness %d, eaten %d, day %u, best %d", why, s_happy, s_eaten, s_day, s_best);
 }
 
 /* Local date as YYYYMMDD, or 0 while the clock is unset (same test as sched.c). The box and the bridge share a time
@@ -104,9 +109,13 @@ void play_init(void)
         if (nvs_get_u32(h, "day", &day) == ESP_OK) {
             s_day = day;
         }
+        uint16_t best;
+        if (nvs_get_u16(h, "best", &best) == ESP_OK) {
+            s_best = best;
+        }
         nvs_close(h);
     }
-    ESP_LOGI(TAG, "happiness %d, eaten %d on %u", s_happy, s_eaten, s_day);
+    ESP_LOGI(TAG, "happiness %d, eaten %d on %u, Pet Says best %d", s_happy, s_eaten, s_day, s_best);
 }
 
 /* "2026-10-17T15:04:05-04:00" -> 20261017, or 0 if it does not start with a date. */
@@ -189,6 +198,24 @@ int play_pet(void)
     set_happy(s_happy + gain);
     ESP_LOGI(TAG, "petted: +%d (stroke %d), happiness %d", gain, s_strokes, s_happy);
     return gain;
+}
+
+int play_says_best(void)
+{
+    return s_best;
+}
+
+bool play_says_done(int score)
+{
+    bool best = score > s_best;
+    if (best) {
+        s_best = score;
+    }
+    int gain = PET_SAYS_HAPPY + score / PET_SAYS_HAPPY_PER;
+    set_happy(s_happy + (gain < PET_SAYS_HAPPY_MAX ? gain : PET_SAYS_HAPPY_MAX));
+    s_dirty = true;
+    save("pet says");
+    return best;
 }
 
 void play_add(int delta, const char *why)

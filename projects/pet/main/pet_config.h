@@ -40,6 +40,10 @@
 #define PET_STROKE_JITTER_PX 3       /* smaller moves between touch samples are ignored */
 #define PET_HAPPY_PET        3       /* happiness for a stroke while the pet is fresh ... */
 #define PET_PET_FADE         4       /* ... one less after every this many strokes, down to nothing */
+#define PET_SAYS_IDLE_MS     30000   /* Pet Says closes after this long waiting for a tap */
+#define PET_SAYS_HAPPY       2       /* happiness for a finished game, plus one per PET_SAYS_HAPPY_PER rounds ... */
+#define PET_SAYS_HAPPY_PER   4
+#define PET_SAYS_HAPPY_MAX   6       /* ... up to this */
 #define PET_HEART_SCALE      6       /* the hearts that float up from a stroke */
 
 /* Session notifications (milestone 6): while an AI session waits for a person, the character takes that source's

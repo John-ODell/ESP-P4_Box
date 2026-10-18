@@ -28,6 +28,15 @@ play section with both. Happiness, eaten count and day live in NVS namespace `pe
 midnight, and at most every 10 minutes for drift; the eaten count resets at local midnight. All numbers are in
 `main/pet_config.h` (`PET_HAPPY_*`, `PET_PLAY_SAVE_MIN`, `PET_SNACK_SCALE`).
 
+**Pet Says** (#65, `main/says.c`) is a memory game from the menu. Four pads in the pet's `play.pads` colours sit
+around the pet, drawn at 5x in the middle. Each round the pet lights one more step; tap them back in order. Steps
+quicken as the sequence grows (650 ms less 30 ms a step, never under 280 ms). A wrong tap ends the game: the pad that
+was wanted lights, the pet mopes (its `sad/mope`, else its notice), and a card shows the score (rounds repeated in
+full) and the best, with Play again and Close. A new best plays the celebration. Every finished game adds 2
+happiness plus 1 per 4 rounds, up to 6 (`PET_SAYS_HAPPY*`); the best score is saved in NVS (`pet_play`, key `best`).
+The close button (X) in the top-right corner, or 30 s without a tap while it waits for one (`PET_SAYS_IDLE_MS`), leaves without a
+score. The game takes every touch, so it never acknowledges an AI session, and keeps the screen bright while open.
+
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a
 touch (`PET_DIM_AFTER_S`) it dims to 75% of full (`PET_DIM_PERCENT`; try 50 if that is still too bright). After 10
@@ -125,8 +134,9 @@ Console is UART0 at 115200. Layout:
 
 - `main/main.c`: boot, BSP start, touch handling, wiring between network, MQTT, schedule, and the face.
 - `main/face.c`: the scene: sprite in the middle, numbers around the edge, banner, session bubble, stats overlay.
-- `main/menu.c`: the play menu over the pet. Feed drops a snack (`face_feed()`); Pet Says opens a stub page until
-  #65, Settings until the on-box Wi-Fi setup (#53).
+- `main/menu.c`: the play menu over the pet. Feed drops a snack (`face_feed()`), Pet Says starts the game
+  (`says_open()`), Settings opens a stub page until the on-box Wi-Fi setup (#53).
+- `main/says.c`: Pet Says, the memory game, over the face with the pet drawn small in the middle.
 - `main/play.c`: happiness and snacks, saved in NVS. Each stroke adds `PET_HAPPY_PET` (3), one less for every
   `PET_PET_FADE` (4) recent strokes, down to nothing; each minute forgets two recent strokes (at most 12 are kept),
   so the gain is back to full after 6 minutes' rest. Pet Says (#65) will use

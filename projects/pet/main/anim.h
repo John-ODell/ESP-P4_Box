@@ -13,3 +13,7 @@ bool anim_reaction_active(void);
 void anim_pet(void);                               /* stroked: a happy wiggle once, unless a level-up or notice is
                                                       looping */
 void anim_set_ink(lv_color_t color);
+void anim_play_named(const char *name, int fallback); /* one animation by its pack name, once, as a reaction; the
+                                                         PET_REACT_* fallback if the pet has none by that name */
+void anim_set_view(int x, int y, int scale);      /* move and resize the pet (Pet Says draws it small) */
+lv_obj_t *anim_obj(void);                         /* the sprite, for stacking order */

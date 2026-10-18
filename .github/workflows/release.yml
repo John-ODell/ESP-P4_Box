@@ -1,0 +1,66 @@
+# A pet-vX.Y.Z tag builds projects/pet without secrets.h and publishes its flash images (bootloader, partition table,
+# OTA data, app) plus manifest.json, which the Workbench flasher installs from (#51). Other tags and pushes do nothing.
+name: Release
+
+on:
+  push:
+    tags: ["pet-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      IDF_IMAGE: espressif/idf:v5.5.5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # the folder is mounted into the build container; keep the token out of it
+
+      - name: Version from the tag
+        run: |
+          v="${GITHUB_REF_NAME#pet-v}"
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag must be pet-vX.Y.Z, got $GITHUB_REF_NAME"
+            exit 1
+          fi
+          if [ -e projects/pet/main/secrets.h ]; then
+            echo "::error::projects/pet/main/secrets.h is in the repo; a release must not carry it"
+            exit 1
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          # ESP-IDF takes PROJECT_VER from version.txt, so the app (hello, pet/ota) reports the tag's version.
+          echo "$v" > projects/pet/version.txt
+
+      - name: Manifest tests
+        run: python3 -m unittest discover tools
+
+      - name: Build
+        run: |
+          docker run --rm -v "$PWD:/project" -w /project "$IDF_IMAGE" bash -c '
+            set -e
+            git config --global --add safe.directory "*"
+            idf.py -C projects/pet build
+          '
+
+      - name: Collect the images and write the manifest
+        run: python3 tools/make_manifest.py --build projects/pet/build --version "$VERSION" --out dist
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=$(python3 -c "import json; print(' '.join(hex(p['offset']) + ' ' + p['path'] for p in json.load(open('dist/manifest.json'))['parts']))")
+          cat > notes.md <<EOF
+          Desk pet firmware ${VERSION} for the Waveshare ESP32-P4 4-inch box, ESP32-P4 revision 1.x only.
+
+          Install it from the Workbench flasher, or download the four .bin files and use esptool:
+
+              esptool.py --chip esp32p4 -b 921600 write_flash ${args}
+
+          The parts skip the NVS partition, so a reinstall without erasing keeps the box's saved Wi-Fi and bridge
+          settings. \`manifest.json\` describes the images for the flasher.
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/*.bin dist/manifest.json --title "Desk pet ${VERSION}" --notes-file notes.md

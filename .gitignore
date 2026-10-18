@@ -37,3 +37,6 @@ secrets.py
 bridge/var/
 bridge/mosquitto/pet.conf
 bridge/mosquitto/passwd
+
+# release images from tools/make_manifest.py (#51)
+dist/

@@ -65,6 +65,17 @@ idf.py -C projects/pet -p /dev/cu.usbmodem5B610404781 -b 921600 flash
 python tools/serial_tail.py -t 60                 # passive UART reader, no DTR/RTS toggling
 ```
 
+**Releases** (#51). Pushing a `pet-vX.Y.Z` tag runs `.github/workflows/release.yml`: it builds this project without
+`secrets.h` from `sdkconfig.defaults`, and `tools/make_manifest.py` publishes its four images
+(`desk-pet-esp32p4-rev1-vX.Y.Z-{bootloader,partition-table,ota-data-initial,app}.bin`) plus `manifest.json` for the
+Workbench flasher. They stay separate rather than one merged image so that a reinstall without erasing leaves the NVS
+partition, and the settings saved in it, alone. A box flashed with them boots to `not set up` until it is given
+settings.
+
+```bash
+git tag pet-v1.0.0 && git push origin pet-v1.0.0
+```
+
 **Updating over Wi-Fi** (issue #16). The partition table has two app slots, so once it is on the box (one USB flash
 with the commands above, because an app cannot rewrite the table it runs from) later builds go over the LAN:
 

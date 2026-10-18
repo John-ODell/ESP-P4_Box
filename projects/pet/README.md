@@ -12,21 +12,33 @@ the source tint and the waiting counter described below; that part is built and 
 
 Interactions, all passive otherwise: **tap** acknowledges (the waiting session shown in the bubble, banner, stats, a
 waiting level-up), **tap on the bubble** shows the next waiting session, **stroke the pet** (drag a finger over it)
-for hearts, a happy wiggle and a little happiness (#64), **swipe** any direction starting off the pet peeks at the stats
-for 12 s (a swipe within 0.8 s of the last one is ignored, so a flick back does not undo it), **long press** off the
-pet opens the play menu (Feed, Pet Says, Settings, Close; #62). The pet's own area (the box its ink covers in its
+for hearts, a happy wiggle and a little happiness (#64), **swipe** any direction starting off the pet peeks at the
+stats for 12 s (a swipe within 0.8 s of the last one is ignored, so a flick back does not undo it), **long press** off
+the pet opens the play menu (Feed, Pet Says, Settings, Close; #62). The pet's own area (the box its ink covers in its
 resting frames, logged at boot as `face: pet area`) is for touching the pet: a drag there is petting however fast, and
-a long press there does nothing (it does not acknowledge either); a tap there still acknowledges. The menu closes on Close, a tap outside
-it, or 7 s without a touch, keeps the screen bright while open, and its taps never acknowledge a waiting session.
+a long press there does nothing (it does not acknowledge either); a tap there still acknowledges. The menu closes on
+Close, a tap outside it, or 7 s without a touch, keeps the screen bright while open, and its taps never acknowledge a
+waiting session.
 
 **Play** (#63, `main/play.c`) is kept apart from the GitHub numbers. The pet earns one snack per contribution today
 (the bridge's `today.total`, minus snacks already eaten today); **Feed** in the menu drops one on the pet, which
 celebrates with a "Yum!" banner, or says why there is none (none left, or no clock or total for today yet; a total
-counts only on the date in its state's `ts`, so yesterday's retained state gives no snacks after midnight). Happiness (0 to 100,
-starts at 60) goes up 8 per snack and drifts down 1 every 15 awake minutes, never below 20. The stats overlay has a
-play section with both. Happiness, eaten count and day live in NVS namespace `pet_play`, saved on every feed, at
-midnight, and at most every 10 minutes for drift; the eaten count resets at local midnight. All numbers are in
-`main/pet_config.h` (`PET_HAPPY_*`, `PET_PLAY_SAVE_MIN`, `PET_SNACK_SCALE`).
+counts only on the date in its state's `ts`, so yesterday's retained state gives no snacks after midnight). Happiness
+(0 to 100, starts at 60) goes up 8 per snack and drifts down 1 every 15 awake minutes, never below 20. The stats
+overlay has a play section with both. Happiness, eaten count and day live in NVS namespace `pet_play`, saved on every
+feed, at midnight, and at most every 10 minutes for drift; the eaten count resets at local midnight. All numbers are
+in `main/pet_config.h` (`PET_HAPPY_*`, `PET_PLAY_SAVE_MIN`, `PET_SNACK_SCALE`).
+
+**Pet Says** (#65, `main/says.c`) is a memory game from the menu. Four pads in the pet's `play.pads` colours sit
+around the pet, drawn at 5x in the middle. Each round the pet lights one more step; tap them back in order. Steps
+quicken as the sequence grows (650 ms less 30 ms per step in the sequence, never under 280 ms). A wrong tap ends the
+game: the pad that was wanted lights, the pet mopes (its `sad/mope`, else its notice), and after a moment a card shows
+the score (rounds repeated in full) and the best, with Play again and Close. A new best plays the celebration. A game
+that scored adds 2 happiness plus 1 per 4 rounds, up to 6, less 1 for each recent game (a minute forgets one;
+`PET_SAYS_HAPPY*`); the best score is saved in NVS (`pet_play`, key `best`). The close button (X) in the top-right
+corner, or 30 s without a tap while it waits for one (`PET_SAYS_IDLE_MS`), leaves without a score, and the result card
+also closes after 30 s. The game takes every touch, so it never acknowledges an AI session, and keeps the screen
+bright while open.
 
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a
@@ -125,12 +137,12 @@ Console is UART0 at 115200. Layout:
 
 - `main/main.c`: boot, BSP start, touch handling, wiring between network, MQTT, schedule, and the face.
 - `main/face.c`: the scene: sprite in the middle, numbers around the edge, banner, session bubble, stats overlay.
-- `main/menu.c`: the play menu over the pet. Feed drops a snack (`face_feed()`); Pet Says opens a stub page until
-  #65, Settings until the on-box Wi-Fi setup (#53).
+- `main/menu.c`: the play menu over the pet. Feed drops a snack (`face_feed()`), Pet Says starts the game
+  (`says_open()`), Settings opens a stub page until the on-box Wi-Fi setup (#53).
+- `main/says.c`: Pet Says, the memory game, over the face with the pet drawn small in the middle.
 - `main/play.c`: happiness and snacks, saved in NVS. Each stroke adds `PET_HAPPY_PET` (3), one less for every
   `PET_PET_FADE` (4) recent strokes, down to nothing; each minute forgets two recent strokes (at most 12 are kept),
-  so the gain is back to full after 6 minutes' rest. Pet Says (#65) will use
-  `play_add()`.
+  so the gain is back to full after 6 minutes' rest. Pet Says adds happiness with `play_says_done()`.
 - `main/anim.c`: sprite player. Idle animations by weight for the current mood class, reactions that preempt them,
   the sleep loop. Frames are LVGL A8 images scaled 12x with antialiasing off, so each art pixel is a crisp 12x12 block.
 - `main/pet_def.h`: what a pet is to the firmware (`pet_def_t`): frames, animations, idle sets per mood, colours and

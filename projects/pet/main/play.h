@@ -13,4 +13,7 @@ int play_snacks(void);                  /* snacks left today; -1 until the clock
 int play_eaten(void);                   /* snacks eaten today */
 bool play_feed(void);                   /* eat one snack: false if none is left */
 int play_pet(void);                     /* a stroke: adds happiness with diminishing returns; returns the gain */
-void play_add(int delta, const char *why); /* Pet Says (#65) */
+void play_add(int delta, const char *why); /* anything else that cheers the pet up */
+int play_says_best(void);               /* Pet Says best score */
+bool play_says_done(int score);         /* a finished game: happiness (less for each recent game, none for score 0)
+                                           and the best score saved; true on a new best */

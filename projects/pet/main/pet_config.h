@@ -40,6 +40,11 @@
 #define PET_STROKE_JITTER_PX 3       /* smaller moves between touch samples are ignored */
 #define PET_HAPPY_PET        3       /* happiness for a stroke while the pet is fresh ... */
 #define PET_PET_FADE         4       /* ... one less after every this many strokes, down to nothing */
+#define PET_SAYS_IDLE_MS     30000   /* Pet Says closes after this long waiting for a tap, or on its result card */
+#define PET_SAYS_RESULT_MS   1200    /* after a miss: the pet reacts and the wanted pad shows before the card */
+#define PET_SAYS_HAPPY       2       /* happiness for a game that scored, plus one per PET_SAYS_HAPPY_PER rounds ... */
+#define PET_SAYS_HAPPY_PER   4
+#define PET_SAYS_HAPPY_MAX   6       /* ... up to this, one less for each recent game (a minute forgets one) */
 #define PET_HEART_SCALE      6       /* the hearts that float up from a stroke */
 
 /* Session notifications (milestone 6): while an AI session waits for a person, the character takes that source's

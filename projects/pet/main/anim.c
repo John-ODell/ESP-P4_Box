@@ -21,8 +21,13 @@ static bool s_loop;            /* reaction loops until acked */
 static int s_repeat;           /* remaining extra plays of a non-looping reaction */
 static int s_pet_anim;         /* what petting plays: the pet's happy wiggle, else its celebrate */
 
+static int s_img_id, s_dx, s_dy;   /* what is on screen, to redraw it when the view changes */
+
 static void show_image(int img, int dx, int dy)
 {
+    s_img_id = img;
+    s_dx = dx;
+    s_dy = dy;
     lv_image_set_src(s_img, s_pet->images[img]);
     lv_obj_set_pos(s_img, s_x + dx * s_scale, s_y + dy * s_scale);
 }
@@ -183,12 +188,45 @@ void anim_pet(void)
     if (s_anim == s_pet_anim) {
         return;   /* already wiggling: keep going rather than restart on every stroke */
     }
-    if (s_anim >= 0 && s_reaction && s_loop && s_anim != s_pet->reaction[PET_REACT_SLEEP]) {
-        return;   /* a level-up or a notice waits for a tap */
+    if (anim_waiting()) {
+        return;   /* a level-up waits for a tap */
     }
     s_loop = false;
     s_repeat = 0;
     start(s_pet_anim, true);
+}
+
+void anim_play_named(const char *name, int fallback)
+{
+    for (int i = 0; i < s_pet->anim_count; i++) {
+        if (strcmp(s_pet->anims[i].name, name) == 0) {
+            s_loop = false;
+            s_repeat = 0;
+            ESP_LOGI(TAG, "play %s", name);
+            start(i, true);
+            return;
+        }
+    }
+    anim_play(fallback, false);
+}
+
+void anim_set_view(int x, int y, int scale)
+{
+    s_x = x;
+    s_y = y;
+    s_scale = scale;
+    lv_image_set_scale(s_img, 256 * scale);
+    show_image(s_img_id, s_dx, s_dy);
+}
+
+lv_obj_t *anim_obj(void)
+{
+    return s_img;
+}
+
+bool anim_waiting(void)
+{
+    return s_anim >= 0 && s_reaction && s_loop && s_anim != s_pet->reaction[PET_REACT_SLEEP];
 }
 
 bool anim_reaction_active(void)

@@ -1,10 +1,12 @@
 /* The play menu (#62): a long press opens it over the pet. Feed closes the menu and drops a snack (#63), or says why
- * there is none; Pet Says and Settings open their pages (stubs until #65 and #53); Close, a tap outside the panel,
- * or PET_MENU_IDLE_MS without a touch closes it. Its objects catch their own taps, which do not bubble to the screen,
- * so menu taps never acknowledge a waiting AI session; MQTT state and notices keep updating the face underneath. */
+ * there is none; Pet Says starts the memory game (#65); Settings opens a stub page until #53. Close, a tap outside the
+ * panel, or PET_MENU_IDLE_MS without a touch closes it. Its objects catch their own taps, which do not bubble to the
+ * screen, so menu taps never acknowledge a waiting AI session; MQTT state and notices keep updating the face
+ * underneath. */
 #include "menu.h"
 #include "face.h"
 #include "play.h"
+#include "says.h"
 #include "pet_config.h"
 #include "sched.h"
 #include "esp_log.h"
@@ -19,7 +21,7 @@ enum { ITEM_FEED, ITEM_SAYS, ITEM_SETTINGS, ITEM_CLOSE, ITEMS };
 static const char *const ITEM_LABEL[ITEMS] = {"Feed", "Pet Says", "Settings", "Close"};
 static const char *const PAGE_TEXT[ITEM_CLOSE] = {
     "No snacks left today. Go make a commit!",   /* replaced while the bridge has not sent today's total */
-    "The memory game is coming soon.",
+    NULL,   /* Pet Says opens the game, not a page */
     "Coming with Wi-Fi setup.",
 };
 
@@ -66,6 +68,9 @@ static void item_cb(lv_event_t *e)
     ESP_LOGI(TAG, "%s", ITEM_LABEL[item]);
     if (item == ITEM_CLOSE) {
         menu_close("Close");
+    } else if (item == ITEM_SAYS) {
+        menu_close("pet says");
+        says_open();
     } else if (item == ITEM_FEED && play_snacks() > 0) {
         menu_close("feed");   /* the pet eats in full view */
         face_feed();          /* while a snack is still falling it says so instead */

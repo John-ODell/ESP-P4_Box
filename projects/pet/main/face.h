@@ -23,5 +23,6 @@ void face_set_notice(const pet_notice_t *n, int pos, int count, int held, bool a
 bool face_point_on_pet(lv_point_t p);     /* on the pet's sprite, with no overlay or bubble over it: touches there
                                              pet it, and a long press there does not open the menu */
 void face_pet(lv_point_t p);              /* a stroke at p: hearts float up, the pet wiggles, happiness rises */
+void face_refresh_play(void);             /* happiness changed elsewhere (Pet Says): redraw the stats play section */
 bool face_point_in_bubble(lv_point_t p);  /* on the bubble, with nothing drawn over it? a tap there cycles */
 void face_clear_notice(void);             /* nothing waits: normal colours; hold released unless a banner waits */

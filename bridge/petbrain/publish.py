@@ -9,7 +9,8 @@
 moment it connects. The previous state is kept in bridge/var/last_state.json so
 one-shot events survive a restart. Session notifications from AI tools arrive on
 the local HTTP endpoint (notify_api.py) and go out on `pet/event` and the retained
-`pet/notify`.
+`pet/notify`. 20 Questions games from the box arrive on `pet/q20` and are answered on
+`pet/q20/ask` (q20.py).
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ import paho.mqtt.client as mqtt
 
 from .brain import compute_state
 from .github_source import fetch_days, load_dotenv
-from . import tailnet
+from . import q20, tailnet
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -158,9 +159,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = config()
     loop_mode = not (a.once or a.state_file)
-    client = connect(cfg, topics=(TOPIC_ACK,) if loop_mode else ())
+    client = connect(cfg, topics=(TOPIC_ACK, q20.TOPIC_IN) if loop_mode else ())
     if loop_mode:
         start_notifier(cfg, client)
+        q20.attach(client)
 
     if a.state_file:
         publish_state(client, json.loads(Path(a.state_file).read_text()))

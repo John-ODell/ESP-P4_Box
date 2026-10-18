@@ -188,7 +188,7 @@ void anim_pet(void)
     if (s_anim == s_pet_anim) {
         return;   /* already wiggling: keep going rather than restart on every stroke */
     }
-    if (s_anim >= 0 && s_reaction && s_loop && s_anim != s_pet->reaction[PET_REACT_SLEEP]) {
+    if (anim_waiting()) {
         return;   /* a level-up or a notice waits for a tap */
     }
     s_loop = false;
@@ -222,6 +222,11 @@ void anim_set_view(int x, int y, int scale)
 lv_obj_t *anim_obj(void)
 {
     return s_img;
+}
+
+bool anim_waiting(void)
+{
+    return s_anim >= 0 && s_reaction && s_loop && s_anim != s_pet->reaction[PET_REACT_SLEEP];
 }
 
 bool anim_reaction_active(void)

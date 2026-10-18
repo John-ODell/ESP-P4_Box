@@ -86,7 +86,8 @@ static void update(void)
     char why[48];
     if (s_hold) {
         target = PET_BRIGHT_FULL;
-        snprintf(why, sizeof(why), "%s", s_hold & SCHED_HOLD_FACE ? "waiting for a tap" : "menu open");
+        snprintf(why, sizeof(why), "%s", s_hold & SCHED_HOLD_FACE ? "waiting for a tap"
+                                         : s_hold & SCHED_HOLD_MENU ? "menu open" : "Pet Says");
     } else if (idle_s < PET_DIM_AFTER_S) {
         target = PET_BRIGHT_FULL;
         snprintf(why, sizeof(why), "active");

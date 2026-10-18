@@ -1,10 +1,11 @@
 /* Pet Says (#65). Four pads around the pet, drawn small in the middle: the pet shows a sequence, one step longer each
  * round, and the player taps it back. A wrong tap ends the game: the pet mopes, then the score and best score show
- * (best kept in NVS by play.c), with a celebration for a new best; every finished game adds a little happiness.
+ * (best kept in NVS by play.c), with a celebration for a new best; a game that scored adds a little happiness.
  * Close, or PET_SAYS_IDLE_MS without a touch while it waits for the player, returns to the pet without a score. The
  * overlay takes every touch, so nothing here acknowledges an AI session; MQTT and notices update the face beneath. */
 #include "says.h"
 #include "anim.h"
+#include "face.h"
 #include "play.h"
 #include "pet_config.h"
 #include "sched.h"
@@ -68,6 +69,12 @@ static void close_game(const char *why)
     sched_hold(SCHED_HOLD_GAME, false);
 }
 
+static void show_result(void)
+{
+    lv_obj_remove_flag(s_result, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_result);   /* over the bottom pad, clear of the pet so its mope shows */
+}
+
 static void next_round(void)
 {
     if (s_len < MAX_STEPS) {
@@ -116,6 +123,10 @@ static void timer_cb(lv_timer_t *t)
             next_round();
         }
         break;
+    case ST_OVER:   /* the pause after a miss is over */
+        lv_timer_pause(t);
+        show_result();
+        break;
     default:
         lv_timer_pause(t);
         break;
@@ -126,8 +137,8 @@ static void game_over(int pad)
 {
     int score = s_len - 1;   /* rounds repeated in full */
     s_state = ST_OVER;
-    lv_timer_pause(s_idle);
-    lv_timer_pause(s_timer);
+    lv_timer_reset(s_idle);   /* the result card closes the game too if nobody taps */
+    lv_timer_resume(s_idle);
     for (int i = 0; i < PADS; i++) {
         light(i, false);
     }
@@ -136,17 +147,25 @@ static void game_over(int pad)
     bool best = play_says_done(score);
     ESP_LOGI(TAG, "game over: tapped %d, wanted %d; score %d, best %d%s", pad, s_seq[s_pos], score,
              play_says_best(), best ? " (new)" : "");
+    bool waiting = anim_waiting();   /* a level-up or notice loop waits for a tap after the game: leave it be */
     if (best) {
-        anim_play(PET_REACT_CELEBRATE, false);
+        if (!waiting) {
+            anim_play(PET_REACT_CELEBRATE, false);
+        }
         lv_label_set_text_fmt(s_result_text, "New best!\nscore %d   (was %d)", score, best_before);
     } else {
-        anim_play_named("sad/mope", PET_REACT_NOTICE);
+        if (!waiting) {
+            anim_play_named("sad/mope", PET_REACT_NOTICE);
+        }
         lv_label_set_text_fmt(s_result_text, "score %d\nbest %d", score, play_says_best());
     }
     lv_label_set_text(s_status, "");
     lv_label_set_text_fmt(s_score, "best %d", play_says_best());
-    lv_obj_remove_flag(s_result, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(s_result);   /* over the bottom pad, clear of the pet so its mope shows */
+    face_refresh_play();
+    /* The pet reacts and the wanted pad stays lit for a moment before the card covers the bottom of the screen. */
+    lv_timer_set_period(s_timer, PET_SAYS_RESULT_MS);
+    lv_timer_reset(s_timer);
+    lv_timer_resume(s_timer);
 }
 
 static void pad_cb(lv_event_t *e)
@@ -325,9 +344,4 @@ void says_open(void)
     sched_hold(SCHED_HOLD_GAME, true);
     s_len = 0;
     next_round();
-}
-
-bool says_is_open(void)
-{
-    return s_state != ST_IDLE;
 }

@@ -22,6 +22,7 @@ static int s_total = -1;        /* today.total from the bridge, -1 until the fir
 static unsigned s_total_day;    /* YYYYMMDD the bridge made that total on */
 static int s_awake_min, s_since_save_min;
 static int s_best;              /* Pet Says best score */
+static int s_games;             /* recent scoring games; each minute forgets one */
 static int s_strokes;           /* recent strokes, at most what takes the gain to 0; each minute forgets two, so a
                                    few minutes' rest makes petting count again */
 static bool s_dirty;
@@ -145,6 +146,7 @@ void play_tick(bool asleep)
 {
     check_day();
     s_strokes = s_strokes > 2 ? s_strokes - 2 : 0;
+    s_games = s_games > 0 ? s_games - 1 : 0;
     if (!asleep && ++s_awake_min >= PET_HAPPY_DECAY_MIN) {
         s_awake_min = 0;
         if (s_happy > PET_HAPPY_FLOOR) {
@@ -211,8 +213,16 @@ bool play_says_done(int score)
     if (best) {
         s_best = score;
     }
-    int gain = PET_SAYS_HAPPY + score / PET_SAYS_HAPPY_PER;
-    set_happy(s_happy + (gain < PET_SAYS_HAPPY_MAX ? gain : PET_SAYS_HAPPY_MAX));
+    int gain = 0;
+    if (score > 0) {   /* a first-step miss earns nothing; quick games in a row earn less each */
+        gain = PET_SAYS_HAPPY + score / PET_SAYS_HAPPY_PER;
+        gain = (gain < PET_SAYS_HAPPY_MAX ? gain : PET_SAYS_HAPPY_MAX) - s_games;
+        gain = gain > 0 ? gain : 0;
+        if (s_games < PET_SAYS_HAPPY_MAX) {
+            s_games++;
+        }
+    }
+    set_happy(s_happy + gain);
     s_dirty = true;
     save("pet says");
     return best;

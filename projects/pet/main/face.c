@@ -621,3 +621,8 @@ void face_pet(lv_point_t p)
     sched_activity("petted");
     fill_play();
 }
+
+void face_refresh_play(void)
+{
+    fill_play();
+}

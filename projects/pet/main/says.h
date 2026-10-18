@@ -7,4 +7,3 @@
  * display lock held. */
 void says_create(lv_obj_t *parent, const pet_def_t *pet);  /* after menu_create */
 void says_open(void);
-bool says_is_open(void);

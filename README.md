@@ -53,7 +53,9 @@ The full rules, message format, and known limits are in [bridge/README.md](bridg
 projects/pet/        box firmware: ESP-IDF 5.5.5, LVGL 9, Waveshare BSP, Wi-Fi, MQTT
 projects/wifi-check/ standalone Wi-Fi scan and join test for the C6
 bridge/              Mac-side brain, GitHub reader, MQTT publisher, session-event endpoint, Mosquitto setup, tests
+pets/                the pet's look: one folder per pet (frames.png + pet.json), see pets/README.md
 tools/serial_tail.py passive serial reader that never resets the board
+tools/petpack.py     check, preview and pack a pet folder
 notes/               flashing notes, C6 findings, original project brief
 vendor/waveshare-4b/ Waveshare's official repo as a submodule (examples, BSP, schematics)
 ```
@@ -89,6 +91,21 @@ Prerequisites: ESP-IDF v5.5.5 at `~/esp/esp-idf`, Homebrew, Python 3.11 or newer
    ```
 
 The box shows your real state about 9 seconds after boot.
+
+## Make your own pet
+
+The pet's whole look lives in [`pets/dolphin/`](pets/dolphin): `frames.png` holds every frame as 48x40 two-colour pixel
+art, and `pet.json` names the animations, which play in each mood and how often, the colours, and the snack, hearts and
+game pads. Copy the folder, draw in any pixel editor, and check it:
+
+```bash
+python3 tools/petpack.py check   pets/mypet
+python3 tools/petpack.py preview pets/mypet -o sheet.png
+python3 tools/petpack.py build   pets/mypet -o mypet.petpack
+```
+
+[`pets/README.md`](pets/README.md) walks through it. Loading a pack onto the box without rebuilding the firmware comes
+with #67, and sending one over Wi-Fi with #68.
 
 ## Board notes
 

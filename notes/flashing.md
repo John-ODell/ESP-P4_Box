@@ -81,7 +81,7 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
 
 ## 2026-10-15 late: milestone 5 asset pipeline decisions
 
-- Character frames are 48x40 one-bit sprites emitted by `tools/gen_sprites.py` as LVGL **A8** images (alpha mask,
+- Character frames are 48x40 one-bit sprites emitted by `tools/gen_sprites.py` (since #66: `tools/petpack.py c pets/dolphin`) as LVGL **A8** images (alpha mask,
   1 byte/pixel, 1.9 KB per frame) and drawn by one `lv_image` with `lv_image_set_scale(256 * 12)`,
   `lv_image_set_antialias(false)` (nearest neighbour, crisp 12x12 blocks) and `image_recolor` for the ink colour. LVGL
   9.3's software renderer supports transformed A8 (`transform_a8` in `lv_draw_sw_transform.c`), confirmed in the

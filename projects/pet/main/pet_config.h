@@ -35,6 +35,10 @@
 #define PET_HAPPY_FEED       8       /* per snack */
 #define PET_PLAY_SAVE_MIN    10      /* drift is saved to NVS at most this often; feeding saves at once */
 #define PET_SNACK_SCALE      4       /* the falling fish: 48x40 art drawn 4x */
+#define PET_STROKE_PX        150     /* finger travel over the pet per stroke: one heart, one bit of happiness */
+#define PET_HAPPY_PET        3       /* happiness for a stroke while the pet is fresh ... */
+#define PET_PET_FADE         4       /* ... one less after every this many strokes, down to nothing */
+#define PET_HEART_SCALE      6       /* the hearts that float up from a stroke */
 
 /* Session notifications (milestone 6): while an AI session waits for a person, the character takes that source's
  * colour and a bubble names the session. Sources are what the senders in bridge/hooks/ and bridge/notify.py put in

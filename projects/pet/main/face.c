@@ -24,6 +24,8 @@ static const char *TAG = "face";
 static lv_obj_t *s_level, *s_xp_bar, *s_xp_text, *s_streak, *s_clock, *s_today, *s_mood, *s_link, *s_status, *s_banner;
 static lv_obj_t *s_stats, *s_stats_body, *s_stats_bar, *s_play_title, *s_play_body;
 static lv_obj_t *s_snack;          /* the falling fish while the pet is fed */
+static lv_area_t s_pet_box;        /* screen area the pet's ink covers in any resting frame */
+static int s_hearts;               /* hearts floating now */
 static lv_timer_t *s_snack_timer;  /* steps through the pet's snack frames during the fall */
 static int s_snack_frame;
 static lv_timer_t *s_banner_timer, *s_stats_timer;
@@ -173,6 +175,87 @@ static void snack_landed(lv_anim_t *a)
     fill_play();
 }
 
+/* Where the pet's ink is, from its resting frames (every mood), so touches on blank sprite corners still open the
+ * menu. Falls back to the whole sprite if a frame is blank. */
+static void find_pet_box(void)
+{
+    int x1 = PET_SPRITE_W, y1 = PET_SPRITE_H, x2 = -1, y2 = -1;
+    for (int m = 0; m < PET_MOOD_CLASSES; m++) {
+        const uint8_t *px = s_pet->images[s_pet->rest[m]]->data;
+        for (int y = 0; y < PET_SPRITE_H; y++) {
+            for (int x = 0; x < PET_SPRITE_W; x++) {
+                if (px[y * PET_SPRITE_W + x]) {
+                    x1 = x < x1 ? x : x1;
+                    x2 = x > x2 ? x : x2;
+                    y1 = y < y1 ? y : y1;
+                    y2 = y > y2 ? y : y2;
+                }
+            }
+        }
+    }
+    if (x2 < 0) {
+        x1 = y1 = 0;
+        x2 = PET_SPRITE_W - 1;
+        y2 = PET_SPRITE_H - 1;
+    }
+    s_pet_box.x1 = PET_SPRITE_X + x1 * PET_SPRITE_SCALE;
+    s_pet_box.y1 = PET_SPRITE_Y + y1 * PET_SPRITE_SCALE;
+    s_pet_box.x2 = PET_SPRITE_X + (x2 + 1) * PET_SPRITE_SCALE - 1;
+    s_pet_box.y2 = PET_SPRITE_Y + (y2 + 1) * PET_SPRITE_SCALE - 1;
+    ESP_LOGI(TAG, "pet area %d,%d to %d,%d", (int)s_pet_box.x1, (int)s_pet_box.y1, (int)s_pet_box.x2,
+             (int)s_pet_box.y2);
+}
+
+static void heart_y(void *obj, int32_t v)
+{
+    lv_obj_set_y(obj, v);
+}
+
+static void heart_opa(void *obj, int32_t v)
+{
+    lv_obj_set_style_opa(obj, (lv_opa_t)v, 0);
+}
+
+static void heart_done(lv_anim_t *a)
+{
+    s_hearts--;
+    lv_obj_delete_async(a->var);
+}
+
+/* One heart rising and fading from p, in the accent colour, alternating the pet's heart frames. */
+static void float_heart(lv_point_t p)
+{
+    static unsigned n;
+    const pet_anim_t *h = &s_pet->heart;
+    const int w = PET_SPRITE_W * PET_HEART_SCALE, ht = PET_SPRITE_H * PET_HEART_SCALE;
+    lv_obj_t *img = lv_image_create(lv_obj_get_parent(s_snack));
+    lv_image_set_src(img, s_pet->images[h->frames[n++ % h->count].img]);
+    lv_image_set_pivot(img, 0, 0);
+    lv_image_set_scale(img, 256 * PET_HEART_SCALE);
+    lv_image_set_antialias(img, false);
+    lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+    lv_obj_set_style_image_recolor(img, ACCENT_COLOR, 0);
+    lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_move_to_index(img, lv_obj_get_index(s_snack));   /* over the pet, under banner, stats and menu */
+    int y = p.y - ht / 2;
+    lv_obj_set_pos(img, p.x - w / 2, y);
+    s_hearts++;
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, img);
+    lv_anim_set_exec_cb(&a, heart_y);
+    lv_anim_set_values(&a, y, y - 160);
+    lv_anim_set_duration(&a, 1100);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+    lv_anim_set_exec_cb(&a, heart_opa);
+    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_completed_cb(&a, heart_done);
+    lv_anim_start(&a);
+}
+
 void face_create(lv_obj_t *parent, const pet_def_t *pet)
 {
     s_pet = pet;
@@ -192,6 +275,7 @@ void face_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_obj_remove_flag(s_snack, LV_OBJ_FLAG_CLICKABLE);
     show(s_snack, false);
     lv_timer_create(play_timer, 60000, NULL);
+    find_pet_box();
 
     s_level = label(parent, &lv_font_montserrat_48, ACCENT_COLOR, LV_ALIGN_TOP_LEFT, 24, 16);
     lv_label_set_text(s_level, "LV -");
@@ -517,4 +601,23 @@ bool face_feed(void)
     sched_activity("fed");
     fill_play();
     return true;
+}
+
+bool face_point_on_pet(lv_point_t p)
+{
+    if (!lv_obj_has_flag(s_stats, LV_OBJ_FLAG_HIDDEN) || face_point_in_bubble(p)) {
+        return false;   /* the overlay and the bubble take their own taps */
+    }
+    return p.x >= s_pet_box.x1 && p.x <= s_pet_box.x2 && p.y >= s_pet_box.y1 && p.y <= s_pet_box.y2;
+}
+
+void face_pet(lv_point_t p)
+{
+    if (s_hearts < 4) {   /* a fast rub would otherwise pile up hearts */
+        float_heart(p);
+    }
+    anim_pet();
+    play_pet();
+    sched_activity("petted");
+    fill_play();
 }

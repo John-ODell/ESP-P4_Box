@@ -38,6 +38,10 @@ static int s_shown;             /* index in s_notify of the entry in the bubble,
 static bool s_swallow_click;   /* LVGL fires CLICKED after a gesture or long press; ignore that one */
 static bool s_swiped;             /* this press already swiped: it must not also become a long press */
 static int64_t s_last_swipe_us;   /* when a swipe last toggled the stats, for PET_SWIPE_COOLDOWN_MS */
+static bool s_on_pet;             /* this press started on the pet */
+static bool s_petted;             /* ... and has stroked it at least once */
+static int s_stroke;              /* finger travel over the pet since the last heart */
+static lv_point_t s_last_pt;
 
 static const char *gesture_name(lv_dir_t d)
 {
@@ -126,8 +130,29 @@ static void touch_event_cb(lv_event_t *e)
         s_swallow_click = false; /* a long press that opened the menu never gets its CLICKED: the press moved to the
                                     overlay, so clear the swallow here or the next real tap is eaten */
         s_swiped = false;
+        s_on_pet = face_point_on_pet(p);   /* the pet's own area: drags there pet it, a long press does nothing */
+        s_stroke = 0;
+        s_petted = false;
+        s_last_pt = p;
         sched_touch(); /* brighten on finger-down, not on release */
         ESP_LOGI(TAG, "touch down  x=%d y=%d", (int)p.x, (int)p.y);
+        break;
+    case LV_EVENT_PRESSING:
+        if (s_on_pet && !menu_is_open()) {
+            if (face_point_on_pet(p)) {   /* count only travel over the pet itself */
+                s_stroke += abs((int)(p.x - s_last_pt.x)) + abs((int)(p.y - s_last_pt.y));
+            }
+            s_last_pt = p;
+            if (s_stroke >= PET_STROKE_PX) {
+                s_stroke = 0;
+                if (!s_petted) {
+                    ESP_LOGI(TAG, "stroke on the pet x=%d y=%d", (int)p.x, (int)p.y);
+                }
+                s_petted = true;
+                s_swallow_click = true;   /* petting is not a tap: it acknowledges nothing */
+                face_pet(p);
+            }
+        }
         break;
     case LV_EVENT_RELEASED:
         ESP_LOGI(TAG, "touch up    x=%d y=%d", (int)p.x, (int)p.y);
@@ -155,6 +180,10 @@ static void touch_event_cb(lv_event_t *e)
             ESP_LOGI(TAG, "long press after a swipe: ignored");
             break;
         }
+        if (s_on_pet) { /* the pet's area is for touching the pet; the menu opens from anywhere else */
+            ESP_LOGI(TAG, "long press on the pet x=%d y=%d: no menu", (int)p.x, (int)p.y);
+            break;
+        }
         s_swallow_click = true;
         sched_touch();
         ESP_LOGI(TAG, "long press  x=%d y=%d -> menu", (int)p.x, (int)p.y);
@@ -163,6 +192,10 @@ static void touch_event_cb(lv_event_t *e)
     case LV_EVENT_GESTURE: {
         if (menu_is_open()) {
             break; /* belt and braces: menu.c already stops gestures bubbling out of the overlay */
+        }
+        if (s_on_pet) { /* a drag that starts on the pet is petting, however fast; stats swipes start off it */
+            s_swallow_click = true;
+            break;
         }
         s_swallow_click = true;
         s_swiped = true;

@@ -1,5 +1,6 @@
 /* Sprite player: idle animations drawn by weight per mood, reactions that preempt them, a sleep loop. */
 #include <stdlib.h>
+#include <string.h>
 #include "anim.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -18,6 +19,7 @@ static int s_frame;
 static bool s_reaction;        /* current animation is a reaction (not idle) */
 static bool s_loop;            /* reaction loops until acked */
 static int s_repeat;           /* remaining extra plays of a non-looping reaction */
+static int s_pet_anim;         /* what petting plays: the pet's happy wiggle, else its celebrate */
 
 static void show_image(int img, int dx, int dy)
 {
@@ -81,6 +83,10 @@ static void tick(lv_timer_t *t)
         } else if (s_reaction && s_repeat > 0) {
             s_repeat--;
             s_frame = 0;
+        } else if (s_sleeping) {
+            s_loop = true;                    /* woken by petting or an event: straight back to sleep */
+            start(s_pet->reaction[PET_REACT_SLEEP], true);
+            return;
         } else {
             rest();
             return;
@@ -105,6 +111,13 @@ void anim_init(lv_obj_t *parent, const pet_def_t *pet, int x, int y, int scale)
     lv_obj_set_style_image_recolor(s_img, lv_color_hex(pet->colors.ink), 0);
     lv_obj_remove_flag(s_img, LV_OBJ_FLAG_CLICKABLE);
     s_timer = lv_timer_create(tick, 1000, NULL);
+    s_pet_anim = pet->reaction[PET_REACT_CELEBRATE];
+    for (int i = 0; i < pet->anim_count; i++) {
+        if (strcmp(pet->anims[i].name, "happy/wiggle") == 0) {
+            s_pet_anim = i;
+            break;
+        }
+    }
     rest();
     ESP_LOGI(TAG, "%s: %u frames, %u animations, scale %dx", pet->name, (unsigned)pet->image_count,
              (unsigned)pet->anim_count, scale);
@@ -163,6 +176,19 @@ bool anim_ack(void)
         return true;
     }
     return false;
+}
+
+void anim_pet(void)
+{
+    if (s_anim == s_pet_anim) {
+        return;   /* already wiggling: keep going rather than restart on every stroke */
+    }
+    if (s_anim >= 0 && s_reaction && s_loop && s_anim != s_pet->reaction[PET_REACT_SLEEP]) {
+        return;   /* a level-up or a notice waits for a tap */
+    }
+    s_loop = false;
+    s_repeat = 0;
+    start(s_pet_anim, true);
 }
 
 bool anim_reaction_active(void)

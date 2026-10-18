@@ -189,7 +189,7 @@ void anim_pet(void)
         return;   /* already wiggling: keep going rather than restart on every stroke */
     }
     if (anim_waiting()) {
-        return;   /* a level-up or a notice waits for a tap */
+        return;   /* a level-up waits for a tap */
     }
     s_loop = false;
     s_repeat = 0;

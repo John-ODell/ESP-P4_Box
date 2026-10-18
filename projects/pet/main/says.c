@@ -1,7 +1,7 @@
 /* Pet Says (#65). Four pads around the pet, drawn small in the middle: the pet shows a sequence, one step longer each
  * round, and the player taps it back. A wrong tap ends the game: the pet mopes, then the score and best score show
  * (best kept in NVS by play.c), with a celebration for a new best; a game that scored adds a little happiness.
- * Close, or PET_SAYS_IDLE_MS without a touch while it waits for the player, returns to the pet without a score. The
+ * Close, or PET_SAYS_IDLE_MS without a touch while it waits for the player or shows the result, returns to the pet. The
  * overlay takes every touch, so nothing here acknowledges an AI session; MQTT and notices update the face beneath. */
 #include "says.h"
 #include "anim.h"
@@ -147,7 +147,7 @@ static void game_over(int pad)
     bool best = play_says_done(score);
     ESP_LOGI(TAG, "game over: tapped %d, wanted %d; score %d, best %d%s", pad, s_seq[s_pos], score,
              play_says_best(), best ? " (new)" : "");
-    bool waiting = anim_waiting();   /* a level-up or notice loop waits for a tap after the game: leave it be */
+    bool waiting = anim_waiting();   /* a level-up loop waits for a tap after the game: leave it be */
     if (best) {
         if (!waiting) {
             anim_play(PET_REACT_CELEBRATE, false);

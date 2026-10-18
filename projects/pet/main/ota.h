@@ -10,3 +10,4 @@
 void ota_report_boot(void);                             /* UART: which image and slot run, and whether it is on trial */
 void ota_confirm_running(void);                         /* MQTT is up: keep a trial image; publish pet/ota "running" */
 bool ota_handle_cmd(const char *payload, size_t len);   /* a pet/cmd payload; false when it is not an ota command */
+bool ota_busy(void);                                    /* an update is downloading or verifying */

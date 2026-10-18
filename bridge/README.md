@@ -95,7 +95,7 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
 it renders the numbers but does not re-run the celebrations in `events`. Updates over the LAN (#16) add two more
 topics, `pet/cmd` (Mac to box, never retained) and `pet/ota` (box to Mac, retained): `projects/pet/README.md`,
-"Updating over Wi-Fi".
+"Updating over Wi-Fi". Pet packs over Wi-Fi (#68) use `pet/cmd` too and report on `pet/pack` (box to Mac, retained).
 
 ## State message (`pet/state`)
 

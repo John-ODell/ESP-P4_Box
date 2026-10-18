@@ -17,6 +17,7 @@
 #include "face.h"
 #include "mqtt_link.h"
 #include "ota.h"
+#include "pack_cmd.h"
 #include "sdkconfig.h"
 
 /* IDF reads sdkconfig.defaults only when there is no sdkconfig yet. A checkout that built before this file existed
@@ -213,6 +214,11 @@ void ota_confirm_running(void)
     report("running", me->version, -1, NULL, run->label, confirmed);
 }
 
+bool ota_busy(void)
+{
+    return s_busy;
+}
+
 bool ota_handle_cmd(const char *payload, size_t len)
 {
     cJSON *root = cJSON_ParseWithLength(payload, len);
@@ -226,6 +232,9 @@ bool ota_handle_cmd(const char *payload, size_t len)
         ESP_LOGW(TAG, "cmd ignored: the url must be plain http on the LAN and short: %s", url);
     } else if (s_busy) {
         ESP_LOGW(TAG, "cmd ignored: an update is already running");
+    } else if (pack_busy()) {
+        ESP_LOGW(TAG, "cmd ignored: a pet pack is being installed; send the update after it");
+        fail("a pet pack is being installed; send the update after it", NULL);
     } else {
         s_busy = true;
         if (xTaskCreate(ota_task, "ota", OTA_TASK_STACK, url, 4, NULL) == pdPASS) {

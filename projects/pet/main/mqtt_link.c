@@ -1,5 +1,5 @@
 /* Thin wrapper over esp-mqtt: connect to the bridge's broker, subscribe to pet/state, pet/event, pet/notify and
- * pet/cmd, publish pet/ack and pet/ota. */
+ * pet/cmd, publish pet/ack, pet/ota and pet/pack. */
 #include <stdlib.h>
 #include <string.h>
 #include "mqtt_link.h"

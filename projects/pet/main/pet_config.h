@@ -25,8 +25,8 @@
 
 #define PET_BANNER_MS       4000     /* goal / big-day banner auto-hide */
 #define PET_STATS_MS        12000    /* stats overlay auto-hide */
-#define PET_MENU_IDLE_MS    7000 
-#define PET_SWIPE_COOLDOWN_MS 800    /* after a swipe toggles the stats, later swipes wait this long */    /* play menu closes after this long without a touch */
+#define PET_MENU_IDLE_MS    7000     /* play menu closes after this long without a touch */
+#define PET_SWIPE_COOLDOWN_MS 800    /* after a swipe toggles the stats, later swipes wait this long */
 
 /* Session notifications (milestone 6): while an AI session waits for a person, the character takes that source's
  * colour and a bubble names the session. Sources are what the senders in bridge/hooks/ and bridge/notify.py put in

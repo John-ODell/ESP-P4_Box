@@ -12,7 +12,7 @@ the source tint and the waiting counter described below; that part is built and 
 
 Interactions, all passive otherwise: **tap** acknowledges (the waiting session shown in the bubble, banner, stats, a
 waiting level-up), **tap on the bubble** shows the next waiting session, **swipe** any direction
-peeks at the stats for 12 s, **long press** opens the play menu (Feed, Pet Says, Settings, Close; #62). The menu closes on Close, a tap outside
+peeks at the stats for 12 s (a swipe within 0.8 s of the last one is ignored, so a flick back does not undo it), **long press** opens the play menu (Feed, Pet Says, Settings, Close; #62). The menu closes on Close, a tap outside
 it, or 7 s without a touch, keeps the screen bright while open, and its taps never acknowledge a waiting session.
 
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness

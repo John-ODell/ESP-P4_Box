@@ -160,12 +160,14 @@ static void snack_landed(lv_anim_t *a)
     lv_timer_delete(s_snack_timer);
     s_snack_timer = NULL;
     show(s_snack, false);
-    int left = play_snacks();
+    int left = play_snacks();   /* -1 if midnight passed during the fall */
     ESP_LOGI(TAG, "snack eaten, %d left, happiness %d", left, play_happiness());
     if (!s_banner_sticky) { /* a waiting level-up keeps its celebration loop and banner */
         anim_play(PET_REACT_CELEBRATE, false);
-        char text[40];
-        snprintf(text, sizeof(text), "Yum!  %d snack%s left", left, left == 1 ? "" : "s");
+        char text[40] = "Yum!";
+        if (left >= 0) {
+            snprintf(text, sizeof(text), "Yum!  %d snack%s left", left, left == 1 ? "" : "s");
+        }
         banner(text, GOOD_COLOR, false);
     }
     fill_play();
@@ -252,9 +254,9 @@ void face_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_label_set_long_mode(s_stats_body, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_line_space(s_stats_body, 10, 0);
     lv_label_set_text(s_stats_body, "no state from the bridge yet");
-    lv_obj_t *play_title = label(s_stats, &lv_font_montserrat_24, ACCENT_COLOR, LV_ALIGN_TOP_LEFT, 0, 270);
+    lv_obj_t *play_title = label(s_stats, &lv_font_montserrat_24, ACCENT_COLOR, LV_ALIGN_TOP_LEFT, 0, 312);
     lv_label_set_text(play_title, "play");   /* the pet's own numbers, not from GitHub */
-    s_play_body = label(s_stats, &lv_font_montserrat_24, INK_COLOR, LV_ALIGN_TOP_LEFT, 0, 312);
+    s_play_body = label(s_stats, &lv_font_montserrat_24, INK_COLOR, LV_ALIGN_TOP_LEFT, 0, 352);
     lv_obj_set_style_text_line_space(s_play_body, 10, 0);
     fill_play();
     s_stats_bar = bar(s_stats, 560);
@@ -268,7 +270,8 @@ static void fill_stats(const pet_state_t *s)
 {
     lv_label_set_text_fmt(s_stats_body,
                           "today  %d of %d%s\n"
-                          "commits %d   PRs %d   issues %d   reviews %d   other %d\n"
+                          "commits %d   PRs %d   issues %d\n"   /* two lines: one wraps at 560 px on busy days */
+                          "reviews %d   other %d\n"
                           "today's xp  %d\n"
                           "streak  %d day%s%s\n"
                           "level %d   %d / %d xp   (%d total)\n"
@@ -477,9 +480,20 @@ void face_clear_notice(void)
 
 bool face_feed(void)
 {
-    if (s_snack_timer || !play_feed()) {   /* one fish at a time; none when no snack is left */
+    if (s_snack_timer) {   /* one fish at a time */
+        if (!s_banner_sticky) {
+            banner("Still eating...", INK_COLOR, false);
+        }
         return false;
     }
+    if (!play_feed()) {
+        return false;
+    }
+    if (s_stats_timer) {   /* the fish and the banner draw under the stats overlay: put it away */
+        lv_timer_delete(s_stats_timer);
+        s_stats_timer = NULL;
+    }
+    show(s_stats, false);
     const pet_anim_t *sn = &s_pet->snack;
     const int w = PET_SPRITE_W * PET_SNACK_SCALE, h = PET_SPRITE_H * PET_SNACK_SCALE;
     s_snack_frame = 0;

@@ -1,7 +1,7 @@
 /* The play menu (#62): a long press opens it over the pet. Feed closes the menu and drops a snack (#63), or says why
- * there is none; Pet Says and Settings open their pages (stubs until #65 and #53); Close, a tap outside the panel, or PET_MENU_IDLE_MS without a touch closes it. Its objects catch
- * their own taps, which do not bubble to the screen, so menu taps never acknowledge a waiting AI session; MQTT state
- * and notices keep updating the face underneath. */
+ * there is none; Pet Says and Settings open their pages (stubs until #65 and #53); Close, a tap outside the panel,
+ * or PET_MENU_IDLE_MS without a touch closes it. Its objects catch their own taps, which do not bubble to the screen,
+ * so menu taps never acknowledge a waiting AI session; MQTT state and notices keep updating the face underneath. */
 #include "menu.h"
 #include "face.h"
 #include "play.h"
@@ -51,8 +51,11 @@ static void scrim_cb(lv_event_t *e)
 static void show_page(int item)
 {
     lv_label_set_text(s_page_title, ITEM_LABEL[item]);
-    lv_label_set_text(s_page_text, item == ITEM_FEED && play_snacks() < 0 ? "Waiting for today's numbers from the bridge."
-                                                                          : PAGE_TEXT[item]);
+    const char *text = PAGE_TEXT[item];
+    if (item == ITEM_FEED && play_snacks() < 0) {
+        text = "Snacks are ready once the clock is set and today's numbers arrive from the bridge.";
+    }
+    lv_label_set_text(s_page_text, text);
     lv_obj_add_flag(s_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_page, LV_OBJ_FLAG_HIDDEN);
 }
@@ -65,7 +68,7 @@ static void item_cb(lv_event_t *e)
         menu_close("Close");
     } else if (item == ITEM_FEED && play_snacks() > 0) {
         menu_close("feed");   /* the pet eats in full view */
-        face_feed();
+        face_feed();          /* while a snack is still falling it says so instead */
     } else {
         show_page(item);
     }

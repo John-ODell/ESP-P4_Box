@@ -1,7 +1,8 @@
 /* Play state (#63). Happiness drifts down one point every PET_HAPPY_DECAY_MIN awake minutes, never below
  * PET_HAPPY_FLOOR, and goes up with feeding (and later petting and Pet Says). Snacks left = today's contributions
- * minus snacks eaten today; the eaten count resets at local midnight once the clock is set. Until both the clock and
- * a bridge total for the new day are in, there are no snacks to give (play_snacks() is -1). Saved to NVS namespace
+ * minus snacks eaten today; the eaten count resets at local midnight once the clock is set. A total counts only on the
+ * day its state was made (the date in its ts), so a retained or late state from yesterday gives no snacks; until the
+ * clock is set and a total for today is in, play_snacks() is -1. Saved to NVS namespace
  * `pet_play` on feeding, at midnight, and at most every PET_PLAY_SAVE_MIN minutes for drift. */
 #include <time.h>
 #include "play.h"
@@ -15,7 +16,8 @@ static const char *TAG = "play";
 static int s_happy = PET_HAPPY_START;
 static int s_eaten;
 static unsigned s_day;          /* YYYYMMDD of s_eaten, 0 until the clock is first set */
-static int s_today = -1;        /* today.total from the bridge, -1 until the first state */
+static int s_total = -1;        /* today.total from the bridge, -1 until the first state */
+static unsigned s_total_day;    /* YYYYMMDD the bridge made that total on */
 static int s_awake_min, s_since_save_min;
 static bool s_dirty;
 
@@ -45,7 +47,8 @@ static void save(const char *why)
     ESP_LOGI(TAG, "saved (%s): happiness %d, eaten %d, day %u", why, s_happy, s_eaten, s_day);
 }
 
-/* Local date as YYYYMMDD, or 0 while the clock is unset (same test as sched.c). */
+/* Local date as YYYYMMDD, or 0 while the clock is unset (same test as sched.c). The box and the bridge share a time
+ * zone (both at home), so this and the date in a state's ts name the same day. */
 static unsigned today_key(void)
 {
     time_t now = time(NULL);
@@ -57,19 +60,20 @@ static unsigned today_key(void)
     return (unsigned)((tm.tm_year + 1900) * 10000 + (tm.tm_mon + 1) * 100 + tm.tm_mday);
 }
 
-static void check_day(void)
+/* Today's date, with the eaten count moved to it if the day changed; 0 while the clock is unset. */
+static unsigned check_day(void)
 {
     unsigned day = today_key();
     if (day == 0 || day == s_day) {
-        return;
+        return day;
     }
     if (s_eaten) {
         ESP_LOGI(TAG, "new day %u: eaten count %d -> 0", day, s_eaten);
     }
     s_eaten = 0;
     s_day = day;
-    s_today = -1;   /* the bridge's total is yesterday's until its next state */
     save("new day");
+    return day;
 }
 
 static void set_happy(int v)
@@ -102,10 +106,27 @@ void play_init(void)
     ESP_LOGI(TAG, "happiness %d, eaten %d on %u", s_happy, s_eaten, s_day);
 }
 
-void play_set_today(int total)
+/* "2026-10-17T15:04:05-04:00" -> 20261017, or 0 if it does not start with a date. */
+static unsigned ts_day(const char *ts)
 {
+    unsigned y, m, d;
+    char t;
+    if (!ts || sscanf(ts, "%4u-%2u-%2u%c", &y, &m, &d, &t) != 4 || t != 'T' || m < 1 || m > 12 || d < 1 || d > 31) {
+        return 0;
+    }
+    return y * 10000 + m * 100 + d;
+}
+
+void play_set_today(int total, const char *ts)
+{
+    unsigned day = ts_day(ts);
+    if (day == 0) {
+        ESP_LOGW(TAG, "state ts \"%s\" has no date; total ignored", ts ? ts : "");
+        return;
+    }
+    s_total = total < 0 ? 0 : total;
+    s_total_day = day;
     check_day();
-    s_today = total < 0 ? 0 : total;
 }
 
 void play_tick(bool asleep)
@@ -129,11 +150,11 @@ int play_happiness(void)
 
 int play_snacks(void)
 {
-    check_day();
-    if (s_today < 0 || s_day == 0) {   /* no total yet, or no date to count eaten snacks against */
+    unsigned day = check_day();
+    if (day == 0 || s_total < 0 || s_total_day != day) {   /* no clock, no total yet, or yesterday's total */
         return -1;
     }
-    return s_today > s_eaten ? s_today - s_eaten : 0;
+    return s_total > s_eaten ? s_total - s_eaten : 0;
 }
 
 int play_eaten(void)
@@ -148,6 +169,7 @@ bool play_feed(void)
     }
     s_eaten++;
     set_happy(s_happy + PET_HAPPY_FEED);
+    s_dirty = true;   /* the eaten count changed even when happiness is already 100: a failed save retries */
     save("fed");
     ESP_LOGI(TAG, "fed: %d left, happiness %d", play_snacks(), s_happy);
     return true;

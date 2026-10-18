@@ -17,11 +17,12 @@ it, or 7 s without a touch, keeps the screen bright while open, and its taps nev
 
 **Play** (#63, `main/play.c`) is kept apart from the GitHub numbers. The pet earns one snack per contribution today
 (the bridge's `today.total`, minus snacks already eaten today); **Feed** in the menu drops one on the pet, which
-celebrates with a "Yum!" banner, or says why there is none (none left, or no total or clock yet). Happiness (0 to 100,
+celebrates with a "Yum!" banner, or says why there is none (none left, or no clock or total for today yet; a total
+counts only on the date in its state's `ts`, so yesterday's retained state gives no snacks after midnight). Happiness (0 to 100,
 starts at 60) goes up 8 per snack and drifts down 1 every 15 awake minutes, never below 20. The stats overlay has a
 play section with both. Happiness, eaten count and day live in NVS namespace `pet_play`, saved on every feed, at
 midnight, and at most every 10 minutes for drift; the eaten count resets at local midnight. All numbers are in
-`main/pet_config.h` (`PET_HAPPY_*`, `PET_SNACK_SCALE`).
+`main/pet_config.h` (`PET_HAPPY_*`, `PET_PLAY_SAVE_MIN`, `PET_SNACK_SCALE`).
 
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a

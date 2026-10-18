@@ -311,7 +311,7 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
                  st.big_day ? " BIG" : "", (unsigned long)st.events, retained ? " (retained)" : "");
         if (bsp_display_lock(500)) {
             /* A retained message is a replay of old state: render it, but do not re-celebrate. */
-            play_set_today(st.today.total);   /* snacks come from today's contributions */
+            play_set_today(st.today.total, st.ts);   /* snacks come from today's contributions */
             face_apply_state(&st, !retained);
             if (changed && !retained) {
                 sched_activity("pet state changed"); /* wake the screen: something happened */

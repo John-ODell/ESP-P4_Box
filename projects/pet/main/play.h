@@ -2,13 +2,14 @@
 #include <stdbool.h>
 
 /* Play state (#63): the pet's own happiness meter and today's snacks, kept apart from the GitHub numbers (mood, XP,
- * streak only ever come from the bridge). Saved in NVS. Every function runs with the BSP display lock held, which is
- * what keeps the MQTT task and the LVGL task from touching this at the same time. */
+ * streak only ever come from the bridge). Saved in NVS. Apart from play_init, which runs at boot before the display
+ * starts, every function runs with the BSP display lock held, which keeps the MQTT task and the LVGL task from
+ * touching this at the same time. */
 void play_init(void);                   /* load from NVS; call once after nvs_flash_init */
-void play_set_today(int total);         /* today.total from pet/state */
+void play_set_today(int total, const char *ts); /* today.total and the state's ts (the bridge's local time) */
 void play_tick(bool asleep);            /* once a minute: slow drift down while awake, midnight reset, saving */
 int play_happiness(void);               /* 0..100 */
-int play_snacks(void);                  /* snacks left today, or -1 before the bridge has sent today's total */
+int play_snacks(void);                  /* snacks left today; -1 until the clock is set and a total for today is in */
 int play_eaten(void);                   /* snacks eaten today */
 bool play_feed(void);                   /* eat one snack: false if none is left */
 void play_add(int delta, const char *why); /* petting (#64), Pet Says (#65) */

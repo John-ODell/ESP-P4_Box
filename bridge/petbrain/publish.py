@@ -9,7 +9,8 @@
 moment it connects. The previous state is kept in bridge/var/last_state.json so
 one-shot events survive a restart. Session notifications from AI tools arrive on
 the local HTTP endpoint (notify_api.py) and go out on `pet/event` and the retained
-`pet/notify`.
+`pet/notify`. 20 Questions games from the box arrive on `pet/q20` and are answered on
+`pet/q20/ask` (q20.py).
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ import paho.mqtt.client as mqtt
 
 from .brain import compute_state
 from .github_source import fetch_days, load_dotenv
-from . import tailnet
+from . import q20, tailnet
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -104,9 +105,9 @@ def publish_state(client: mqtt.Client, state: dict) -> None:
              state.get("today", {}).get("total"), state.get("events"))
 
 
-def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier:
+def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier | None:
     """Session notifications: pet/ack from the box, the local HTTP endpoint, and the pending list that survived the
-    last stop (bridge/var/pending.json) published on start."""
+    last stop (bridge/var/pending.json) published on start. None when another bridge already serves the endpoint."""
     def publish(topic: str, payload: str, retain: bool) -> None:
         client.publish(topic, payload, qos=1, retain=retain)
 
@@ -115,9 +116,10 @@ def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier:
         server = make_server(cfg["http_host"], cfg["http_port"], notifier)
     except OSError as exc:
         # Most likely another bridge already serves the endpoint: leave its pending list and pet/ack alone.
-        log.error("notify endpoint not started on %s:%s (%s); the GitHub loop runs without notifications",
+        log.error("notify endpoint not started on %s:%s (%s); the GitHub loop runs without notifications "
+                  "or 20 Questions",
                   cfg["http_host"], cfg["http_port"], exc)
-        return notifier
+        return None
     client.message_callback_add(TOPIC_ACK, lambda c, userdata, msg: notifier.ack(msg.payload))
     notifier.publish_pending()  # what survived the restart, or the empty list: either way the box hears the truth
     serve_in_thread(server)
@@ -158,9 +160,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = config()
     loop_mode = not (a.once or a.state_file)
-    client = connect(cfg, topics=(TOPIC_ACK,) if loop_mode else ())
+    client = connect(cfg, topics=(TOPIC_ACK, q20.TOPIC_IN) if loop_mode else ())
     if loop_mode:
-        start_notifier(cfg, client)
+        if start_notifier(cfg, client) is not None:
+            q20.attach(client)   # like the notifier, left to the bridge already running: two would both answer
 
     if a.state_file:
         publish_state(client, json.loads(Path(a.state_file).read_text()))

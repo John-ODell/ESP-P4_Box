@@ -91,6 +91,8 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/event` | bridge, from the session-event endpoint below | no | `{v, ts, source, kind, session, title, detail}` |
 | `pet/notify` | bridge, after every accepted event or ack | yes | `{v, ts, count, pending: [{source, session, kind, title, ts}]}`, example below |
 | `pet/ack` | box, when a tap acknowledges a session (milestone 6) | no | `{source, session}` or `{all: true}` |
+| `pet/q20` | box, during a 20 Questions game (#78) | no | `{game, op: start}`, `{game, op: answer, n, a}` or `{game, op: quit}` |
+| `pet/q20/ask` | bridge, the model's next turn | no | `{game, n, q}`, `{game, n, guess}` or `{game, error}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
 it renders the numbers but does not re-run the celebrations in `events`. Updates over the LAN (#16) add two more
@@ -203,6 +205,24 @@ puts that machine back on its own bridge. Treat the token like a password: paste
 
 The box itself keeps using this Mac's broker on the home Wi-Fi: the ESP32 cannot
 run Tailscale.
+
+## 20 Questions
+
+The person thinks of something and the pet asks yes-or-no questions on the box (#78). The box sends each tap on
+`pet/q20`; the bridge loop keeps the game and asks a model for the next question or a guess (`petbrain/q20.py`), and
+sends it back on `pet/q20/ask`. A question and a guess each use one of 20 turns, and turn 20 is always a guess. The box
+never holds an API key.
+
+The model is `PET_Q20_CMD` in `.env`: any command that reads the prompt on stdin and prints `{"q": ...}` or `{"guess":
+...}`. The default, `claude -p --model haiku --tools '' --setting-sources '' --no-session-persistence`, uses the Claude
+Code login already on this computer, so it needs no key. It runs with no tools, and without your user settings, so the
+pet's own hooks never turn a question into a waiting session. A turn takes about 5 to 9 seconds. Another command can
+stand in, for example `PET_Q20_CMD="ollama run llama3.2"` (not tried yet). Quote the value, so `. ./.env` reads it, and
+keep an empty `''` argument off the end of the line: the bridge strips quotes from both ends of a value. A call that
+takes longer than `PET_Q20_TIMEOUT` seconds (default 40), fails or gives an unreadable reply twice ends the game with a
+short message on the box. A game cannot start while another game's turn is with the model (it gets "busy"), but a game
+already running is never refused. Only the bridge that holds the notify endpoint answers, so a second bridge started by
+mistake stays quiet.
 
 ## Known limits
 

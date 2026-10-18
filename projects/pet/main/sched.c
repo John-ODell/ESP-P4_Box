@@ -17,7 +17,7 @@ static const char *TAG = "sched";
 static bool s_sntp_started;
 static int s_brightness = PET_BRIGHT_FULL; /* app_main sets this level before sched_start() */
 static int64_t s_last_activity_us;         /* esp_timer clock, so SNTP jumps cannot fake a long idle */
-static bool s_hold;                        /* something waits for a tap: stay at full brightness */
+static unsigned s_hold;                    /* SCHED_HOLD_* bits: something waits for a tap or the menu is open */
 static bool s_sleeping;
 static bool s_time_valid;
 static bool s_fade_ready;
@@ -86,7 +86,7 @@ static void update(void)
     char why[48];
     if (s_hold) {
         target = PET_BRIGHT_FULL;
-        snprintf(why, sizeof(why), "waiting for a tap");
+        snprintf(why, sizeof(why), "%s", s_hold & SCHED_HOLD_FACE ? "waiting for a tap" : "menu open");
     } else if (idle_s < PET_DIM_AFTER_S) {
         target = PET_BRIGHT_FULL;
         snprintf(why, sizeof(why), "active");
@@ -152,12 +152,17 @@ void sched_activity(const char *what)
     update();
 }
 
-void sched_hold(bool on)
+void sched_hold(unsigned why, bool on)
 {
-    if (on != s_hold) {
-        s_hold = on;
-        ESP_LOGI(TAG, "%s", on ? "hold: waiting for a tap" : "hold released");
-        if (!on) {
+    unsigned was = s_hold;
+    s_hold = on ? (s_hold | why) : (s_hold & ~why);
+    if (s_hold != was) {
+        if (s_hold) {
+            ESP_LOGI(TAG, "hold: %s%s%s", s_hold & SCHED_HOLD_FACE ? "waiting for a tap" : "",
+                     s_hold == (SCHED_HOLD_FACE | SCHED_HOLD_MENU) ? ", " : "",
+                     s_hold & SCHED_HOLD_MENU ? "menu open" : "");
+        } else {
+            ESP_LOGI(TAG, "hold released");
             s_last_activity_us = esp_timer_get_time(); /* a real release restarts the idle timer; a repeat does not */
         }
     }

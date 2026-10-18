@@ -133,6 +133,17 @@ next cable flash, so leave it alone unless you plan one. The cable stays the way
 existing checkout: delete `projects/pet/sdkconfig` so the new `sdkconfig.defaults` options apply; the build stops
 with a message if you forget (`notes/flashing.md`, 2026-10-16).
 
+**Pet packs over Wi-Fi** (#68) go the same way, from the computer that runs the bridge:
+`bridge/.venv/bin/python tools/pack_push.py pets/<name>` (or a ready `.petpack`). The tool builds and checks the pack,
+serves it on port 8071, and publishes `{"pack": "http://<mac>:8071/pet.petpack", "sha256": "<hex>"}` on `pet/cmd`.
+The box (`main/pack_cmd.c`) downloads it into PSRAM (at most 512 KB), checks the SHA-256 and then every check the boot
+loader makes (`pet_pack_check()`, about 0.2 s for the largest pack), and only then erases the sectors it needs at the
+start of `storage`, writes it, reads it back and reboots to draw it: the face, menu and game are built around one pet
+at boot. A failed download or check writes nothing and the current pet stays. Reports go to the retained `pet/pack`:
+`downloading`, `checking`, `writing` and `rebooting` with the pet's name and the pack's CRC, or `failed` with the
+reason; after every MQTT connect, `running` with the pet drawn and its pack CRC (no CRC and the reason when it is the
+built-in pet). The tool exits 0 once the box comes back `running` with the new pack's CRC.
+
 Console is UART0 at 115200. Layout:
 
 - `main/main.c`: boot, BSP start, touch handling, wiring between network, MQTT, schedule, and the face.
@@ -149,7 +160,11 @@ Console is UART0 at 115200. Layout:
   play looks. `anim.c` and `face.c` draw whichever one `main.c` hands them.
 - `main/pet_pack.c`: at boot, reads a pet pack from the start of the `storage` partition (flash 0x820000), checks
   it (`notes/pet-packs.md`) and builds a `pet_def_t` in PSRAM; any problem is logged as `pet_pack: using the built-in
-  Dolphin: <why>` and the built-in pet is used. Write a pack with `esptool write_flash 0x820000 pet.petpack` (#67).
+  Dolphin: <why>` and the built-in pet is used. Write a pack with `esptool write_flash 0x820000 pet.petpack` (#67) or
+  `tools/pack_push.py` (#68). `pet_pack_check()` runs the same checks on a pack in memory. cJSON's allocator hooks are
+  installed once at boot and send only the parsing task's allocations to the loader's PSRAM chunks.
+- `main/pack_cmd.c`: pet packs over Wi-Fi: the `pet/cmd` pack command, download, checks, write, the `pet/pack`
+  reports.
 - `main/sprites.c` / `sprites.h`: **generated**, do not edit: the built-in pet, `pet_builtin`. Edit `pets/dolphin/`
   (frames.png and pet.json) and run `python3 tools/petpack.py c pets/dolphin`; `preview pets/dolphin -o sheet.png`
   shows it first (#66).
@@ -158,7 +173,7 @@ Console is UART0 at 115200. Layout:
   string there).
 - `main/net.c`: Wi-Fi station via `esp_wifi_remote` / ESP-Hosted with backoff reconnect.
 - `main/mqtt_link.c`: esp-mqtt client, subscribes to `pet/state`, `pet/event`, `pet/notify` and `pet/cmd`, publishes
-  `pet/ack` and `pet/ota`.
+  `pet/ack`, `pet/ota` and `pet/pack`.
 - `main/pet_state.c`: parses the state JSON (schema v1, see `bridge/README.md`).
 - `main/pet_notify.c`: parses the `pet/notify` list and builds the `pet/ack` message.
 - `main/ota.c`: updates over Wi-Fi: the `pet/cmd` command, the download into the other slot, the trial-and-confirm

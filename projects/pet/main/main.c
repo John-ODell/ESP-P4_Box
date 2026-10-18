@@ -23,6 +23,7 @@
 #include "mqtt_link.h"
 #include "settings.h"
 #include "ota.h"
+#include "pack_cmd.h"
 #include "pet_state.h"
 #include "pet_notify.h"
 #include "sched.h"
@@ -272,12 +273,15 @@ static void on_net(net_status_t st, const char *detail)
     refresh_link_line();
 }
 
+static const char *s_pet_name;   /* for the pet/pack report */
+
 static void on_mqtt_status(bool connected)
 {
     s_mqtt_up = connected;
     refresh_link_line();
     if (connected) {
         ota_confirm_running(); /* an image on trial has now proven itself: keep it (#16) */
+        pack_report_running(s_pet_name); /* which pet the box draws, so pack_push.py can tell a new pack took (#68) */
     }
 }
 
@@ -287,7 +291,7 @@ static void on_cmd(const char *payload, size_t len, bool retained)
         ESP_LOGW(TAG, "cmd: retained message ignored: %.*s", (int)len, payload);
         return;
     }
-    if (!ota_handle_cmd(payload, len)) {
+    if (!ota_handle_cmd(payload, len) && !pack_handle_cmd(payload, len)) {
         ESP_LOGW(TAG, "cmd: not understood: %.*s", (int)len, payload);
     }
 }
@@ -385,6 +389,7 @@ void app_main(void)
     play_init();   /* happiness and today's eaten snacks, from NVS */
 
     const pet_def_t *pet = pet_pack_load();   /* before the display, so a slow flash read shows no blank face */
+    s_pet_name = pet->name;
 
     ESP_LOGI(TAG, "starting display");
     ESP_LOGI(TAG, "boot: reset reason %s", reset_reason_name());

@@ -8,6 +8,8 @@
 #include "pet_pack.h"
 #include "sprites.h"
 #include "cJSON.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_partition.h"
@@ -35,6 +37,7 @@ static const char *const MOOD_KEYS[PET_MOOD_CLASSES] = {"sad", "neutral", "happy
 static const char *const REACTION_KEYS[PET_REACTIONS] = {"celebrate", "notice", "sleep"};
 
 static char s_why[112];   /* the first problem found, for the log */
+static uint32_t s_loaded_crc;   /* CRC of the pack the box is drawing, 0 for the built-in pet */
 
 static bool bad(const char *fmt, ...)
 {
@@ -412,9 +415,10 @@ static bool fill(const cJSON *root, int nframes, pet_def_t *def, arena_t *ar, pe
 }
 
 /* cJSON allocates every node and key on its own, and on this heap each malloc costs about 90 us (measured on the
- * box: a 64 KB pack took 2.5 s to parse and 0.4 s to free). While a pack loads, cJSON takes memory from a few large
- * PSRAM chunks instead, and they are all freed together. The hooks are global, which is safe only because this runs
- * at boot before anything else uses cJSON. */
+ * box: a 64 KB pack took 2.5 s to parse and 0.4 s to free). While a pack is parsed, cJSON takes memory from a few large
+ * PSRAM chunks instead, and they are all freed together. cJSON's hooks are global and other tasks parse MQTT messages
+ * with it, so the hooks stay installed for good and send only the parsing task's calls to the chunks (#68: a pack
+ * received over Wi-Fi is checked while MQTT runs); one pack is parsed at a time. */
 typedef struct chunk { struct chunk *next; size_t used, cap; uint8_t data[]; } chunk_t;
 #define CHUNK_SIZE (64 * 1024)
 static chunk_t *s_chunks;
@@ -436,9 +440,18 @@ static void *chunk_malloc(size_t n)
     return p;
 }
 
-static void chunk_free(void *p)
+static TaskHandle_t s_bump_task;   /* the task parsing a pack, whose cJSON memory comes from the chunks; NULL: none */
+
+static void *hook_malloc(size_t n)
 {
-    (void)p;   /* everything goes at once in chunks_release */
+    return s_bump_task && s_bump_task == xTaskGetCurrentTaskHandle() ? chunk_malloc(n) : malloc(n);
+}
+
+static void hook_free(void *p)
+{
+    if (!(s_bump_task && s_bump_task == xTaskGetCurrentTaskHandle())) {
+        free(p);   /* the parsing task's nodes go all at once in chunks_release */
+    }
 }
 
 static void chunks_release(void)
@@ -450,23 +463,12 @@ static void chunks_release(void)
     }
 }
 
-static const pet_def_t *load(void)
+/* The 24-byte header: magic, format, total length (at most limit), CRC and metadata length, all in range. */
+static bool header(const uint8_t *hdr, size_t limit, uint32_t *total_out, uint32_t *crc_out, uint32_t *jlen_out)
 {
-    const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "storage");
-    if (!part) {
-        bad("no storage partition");
-        return NULL;
-    }
-    uint8_t hdr[PACK_HEADER];
-    esp_err_t err = esp_partition_read(part, 0, hdr, sizeof(hdr));
-    if (err != ESP_OK) {
-        bad("reading storage failed (%s)", esp_err_to_name(err));
-        return NULL;
-    }
     if (memcmp(hdr, "PETPACK", 8) != 0) {
         static const uint8_t erased[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-        bad(memcmp(hdr, erased, 8) == 0 ? "no pet pack in storage" : "storage does not start with a pet pack");
-        return NULL;
+        return bad(memcmp(hdr, erased, 8) == 0 ? "no pet pack in storage" : "not a pet pack (bad magic)");
     }
     uint32_t fmt, total, crc, jlen;
     memcpy(&fmt, hdr + 8, 4);
@@ -474,33 +476,33 @@ static const pet_def_t *load(void)
     memcpy(&crc, hdr + 16, 4);
     memcpy(&jlen, hdr + 20, 4);
     if (fmt != PACK_FORMAT) {
-        bad("pack format %u, this firmware reads %d", (unsigned)fmt, PACK_FORMAT);
-        return NULL;
+        return bad("pack format %u, this firmware reads %d", (unsigned)fmt, PACK_FORMAT);
     }
-    if (total < PACK_HEADER || total > MAX_PACK || total > part->size) {
-        bad("pack size %u is out of range", (unsigned)total);
-        return NULL;
+    if (total < PACK_HEADER || total > MAX_PACK || total > limit) {
+        return bad("pack size %u is out of range", (unsigned)total);
     }
     if (jlen % 4 || jlen > MAX_JSON || PACK_HEADER + jlen > total || (total - PACK_HEADER - jlen) % FRAME_BYTES) {
-        bad("pack metadata length %u does not fit the pack", (unsigned)jlen);
-        return NULL;
+        return bad("pack metadata length %u does not fit the pack", (unsigned)jlen);
     }
     int nframes = (total - PACK_HEADER - jlen) / FRAME_BYTES;
     if (nframes < 1 || nframes > MAX_FRAMES) {
-        bad("pack has %d frames, 1 to %d allowed", nframes, MAX_FRAMES);
-        return NULL;
+        return bad("pack has %d frames, 1 to %d allowed", nframes, MAX_FRAMES);
     }
+    *total_out = total;
+    *crc_out = crc;
+    *jlen_out = jlen;
+    return true;
+}
 
-    const uint8_t *buf;   /* mapped, not copied: flash reads into PSRAM go through a small bounce buffer */
-    esp_partition_mmap_handle_t map;
-    err = esp_partition_mmap(part, 0, total, ESP_PARTITION_MMAP_DATA, (const void **)&buf, &map);
-    if (err != ESP_OK) {
-        bad("mapping the pack failed (%s)", esp_err_to_name(err));
-        return NULL;
-    }
+/* The pet from a whole pack whose header passed header(): every other check, then a pet_def_t in one PSRAM block
+ * that starts with the pet_def_t itself (free() it to drop the pet). NULL, with the reason in s_why, on any problem. */
+static pet_def_t *build(const uint8_t *buf, uint32_t total, uint32_t crc, uint32_t jlen)
+{
+    int nframes = (total - PACK_HEADER - jlen) / FRAME_BYTES;
     cJSON *root = NULL;
     arena_t ar = {0};
     pet_def_t *def = NULL;
+    s_bump_task = xTaskGetCurrentTaskHandle();
     if (esp_rom_crc32_le(0, buf + 20, total - 20) != crc) {
         bad("pack checksum does not match");
         goto out;
@@ -513,8 +515,6 @@ static const pet_def_t *load(void)
     if (!json_shape_ok(js, n)) {
         goto out;
     }
-    cJSON_Hooks hooks = { .malloc_fn = chunk_malloc, .free_fn = chunk_free };
-    cJSON_InitHooks(&hooks);
     root = cJSON_ParseWithLengthOpts(js, n, &end, false);
     if (!cJSON_IsObject(root)) {
         bad("pack metadata is not a JSON object");
@@ -579,17 +579,50 @@ static const pet_def_t *load(void)
 
 out:
     (void)root;   /* no cJSON_Delete: its nodes live in the chunks */
+    s_bump_task = NULL;
     chunks_release();
-    cJSON_InitHooks(NULL);
-    esp_partition_munmap(map);
     if (!def) {
         free(ar.base);
     }
     return def;
 }
 
+static const pet_def_t *load(void)
+{
+    const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "storage");
+    if (!part) {
+        bad("no storage partition");
+        return NULL;
+    }
+    uint8_t hdr[PACK_HEADER];
+    esp_err_t err = esp_partition_read(part, 0, hdr, sizeof(hdr));
+    if (err != ESP_OK) {
+        bad("reading storage failed (%s)", esp_err_to_name(err));
+        return NULL;
+    }
+    uint32_t total, crc, jlen;
+    if (!header(hdr, part->size, &total, &crc, &jlen)) {
+        return NULL;
+    }
+    const uint8_t *buf;   /* mapped, not copied: flash reads into PSRAM go through a small bounce buffer */
+    esp_partition_mmap_handle_t map;
+    err = esp_partition_mmap(part, 0, total, ESP_PARTITION_MMAP_DATA, (const void **)&buf, &map);
+    if (err != ESP_OK) {
+        bad("mapping the pack failed (%s)", esp_err_to_name(err));
+        return NULL;
+    }
+    pet_def_t *def = build(buf, total, crc, jlen);
+    esp_partition_munmap(map);
+    if (def) {
+        s_loaded_crc = crc;
+    }
+    return def;
+}
+
 const pet_def_t *pet_pack_load(void)
 {
+    cJSON_Hooks hooks = { .malloc_fn = hook_malloc, .free_fn = hook_free };
+    cJSON_InitHooks(&hooks);   /* for good: they pass every task but the parsing one straight to malloc and free */
     s_why[0] = 0;
     int64_t t0 = esp_timer_get_time();
     const pet_def_t *def = load();
@@ -601,4 +634,37 @@ const pet_def_t *pet_pack_load(void)
     }
     ESP_LOGW(TAG, "using the built-in %s: %s", pet_builtin.name, s_why);
     return &pet_builtin;
+}
+
+bool pet_pack_check(const uint8_t *buf, size_t len, char *name, size_t name_len, uint32_t *crc_out)
+{
+    s_why[0] = 0;
+    uint32_t total, crc, jlen;
+    if (len < PACK_HEADER || !header(buf, len, &total, &crc, &jlen)) {
+        if (len < PACK_HEADER) {
+            bad("%u bytes is too short for a pet pack", (unsigned)len);
+        }
+        return false;
+    }
+    if (total != len) {
+        return bad("pack says %u bytes, got %u", (unsigned)total, (unsigned)len);
+    }
+    pet_def_t *def = build(buf, total, crc, jlen);
+    if (!def) {
+        return false;
+    }
+    strlcpy(name, def->name, name_len);
+    *crc_out = crc;
+    free(def);   /* the pet's one block: only checking here, the box loads it at the next boot */
+    return true;
+}
+
+const char *pet_pack_why(void)
+{
+    return s_why;
+}
+
+uint32_t pet_pack_loaded_crc(void)
+{
+    return s_loaded_crc;
 }

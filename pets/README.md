@@ -35,7 +35,17 @@ pets/dolphin/
    The box restarts and draws your pet. Only the pack's own bytes are written, so Wi-Fi settings and the firmware stay
    as they are. If the pack fails a check the box draws the dolphin and says why on the serial console (115200 baud,
    a line starting `pet_pack:`). To go back to the dolphin, erase the pack's first sector:
-   `python3 -m esptool --chip esp32p4 -p PORT erase_region 0x820000 0x1000`. Sending a pack over Wi-Fi comes with #68.
+   `python3 -m esptool --chip esp32p4 -p PORT erase_region 0x820000 0x1000`.
+
+   Or, once the box is on Wi-Fi and the bridge is set up, send it without the cable (#68), from the computer that runs
+   the bridge:
+
+   ```bash
+   bridge/.venv/bin/python tools/pack_push.py pets/yourpet      # or a ready yourpet.petpack
+   ```
+
+   It builds and checks the pack, serves it on the LAN, and waits while the box downloads it, checks it again, writes
+   it and restarts drawing your pet. A pack the box refuses leaves the current pet in place, and the tool prints why.
 
 To change the pet built into the firmware instead (what the box draws when there is no pack), edit `dolphin/` and run
 `python3 tools/petpack.py c pets/dolphin`, which rewrites `projects/pet/main/sprites.c` and `sprites.h`. Then rebuild.

@@ -100,11 +100,12 @@ static lv_obj_t *button(lv_obj_t *parent, const char *text, bool quiet, lv_event
     lv_obj_set_style_border_width(b, 2, 0);
     lv_obj_set_style_radius(b, 18, 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
+    /* Text style on the button, inherited by the label: the label itself never gets LV_STATE_PRESSED. */
+    lv_obj_set_style_text_font(b, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_color(b, quiet ? C(dim) : C(ink), 0);
+    lv_obj_set_style_text_color(b, C(background), LV_STATE_PRESSED);
     lv_obj_t *l = lv_label_create(b);
     lv_label_set_text(l, text);
-    lv_obj_set_style_text_font(l, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(l, quiet ? C(dim) : C(ink), 0);
-    lv_obj_set_style_text_color(l, C(background), LV_STATE_PRESSED);
     lv_obj_center(l);
     lv_obj_add_event_cb(b, poke_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, (void *)(intptr_t)item);
@@ -120,6 +121,7 @@ void menu_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_obj_set_style_bg_color(s_scrim, C(background), 0);
     lv_obj_set_style_bg_opa(s_scrim, LV_OPA_70, 0);
     lv_obj_add_flag(s_scrim, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_scrim, LV_OBJ_FLAG_GESTURE_BUBBLE);   /* a swipe on the menu must not toggle the stats */
     lv_obj_remove_flag(s_scrim, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(s_scrim, poke_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_scrim, scrim_cb, LV_EVENT_CLICKED, NULL);

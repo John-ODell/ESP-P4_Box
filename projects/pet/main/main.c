@@ -119,6 +119,8 @@ static void touch_event_cb(lv_event_t *e)
     char buf[48];
     switch (code) {
     case LV_EVENT_PRESSED:
+        s_swallow_click = false; /* a long press that opened the menu never gets its CLICKED: the press moved to the
+                                    overlay, so clear the swallow here or the next real tap is eaten */
         sched_touch(); /* brighten on finger-down, not on release */
         ESP_LOGI(TAG, "touch down  x=%d y=%d", (int)p.x, (int)p.y);
         break;
@@ -150,6 +152,9 @@ static void touch_event_cb(lv_event_t *e)
         menu_open();
         break;
     case LV_EVENT_GESTURE: {
+        if (menu_is_open()) {
+            break; /* belt and braces: menu.c already stops gestures bubbling out of the overlay */
+        }
         s_swallow_click = true;
         sched_touch();
         lv_dir_t d = lv_indev_get_gesture_dir(indev);

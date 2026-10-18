@@ -63,7 +63,9 @@ Brookesia factory firmware (rev1_3 build) is running on the board as of 2026-10-
   presses all logged by `projects/pet` with coordinates spanning 0..719 on both axes, no touch calibration needed
   (`touch_flags` all zero in the BSP default config). Quirk for later: LVGL fires `LV_EVENT_CLICKED` on release even
   after a `LV_EVENT_GESTURE` or `LV_EVENT_LONG_PRESSED`, so the pet's input code must swallow the tap that follows a
-  swipe or long press.
+  swipe or long press. Exception (2026-10-17, #62): when the long press opens an overlay under the finger, LVGL moves
+  the press to the overlay (the screen has no `PRESS_LOCK`), so no `CLICKED` and no `RELEASED` reach the screen;
+  `main.c` clears the swallow on every `PRESSED` so the next real tap is not eaten.
 
 ## Update 2026-10-15 20:05: milestone 4 (Wi-Fi + MQTT) on the board
 

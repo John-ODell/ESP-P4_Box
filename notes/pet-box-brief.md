@@ -38,7 +38,7 @@ Transport: start with **MQTT** on the home LAN (Mosquitto on the Mac, box subscr
 - **Mood** ("butthurt" on the Flipper, inverted here to happiness 0 to 10). Rises with deeds, decays slowly on idle days, never falls below a floor in one day. Mood selects which idle animation set plays: sad, neutral, happy, ecstatic.
 - **Streak.** Consecutive contribution days. The pet visibly cares: a streak badge, and a worried face the evening before a streak would break.
 - **Today counter** with a **daily goal** (default 20). Hitting the goal triggers a small celebration. A big day (100 or more, like today's) triggers a big one.
-- Passive by design. The pet reacts to what I already do. The only interactions are tap to acknowledge, swipe to peek at stats (today, streak, level, XP bar, the four-way breakdown), and long-press for settings. No chores, no reminders, nothing that nags.
+- Passive by design. The pet reacts to what I already do. The only interactions are tap to acknowledge, swipe to peek at stats (today, streak, level, XP bar, the four-way breakdown), and long-press for the play menu (feed, Pet Says, settings; #62). No chores, no reminders, nothing that nags.
 
 ## Notifications layer
 

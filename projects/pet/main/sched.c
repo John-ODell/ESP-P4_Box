@@ -86,7 +86,7 @@ static void update(void)
     char why[48];
     if (s_hold) {
         target = PET_BRIGHT_FULL;
-        snprintf(why, sizeof(why), "waiting for a tap");
+        snprintf(why, sizeof(why), "%s", s_hold & SCHED_HOLD_FACE ? "waiting for a tap" : "menu open");
     } else if (idle_s < PET_DIM_AFTER_S) {
         target = PET_BRIGHT_FULL;
         snprintf(why, sizeof(why), "active");
@@ -157,12 +157,12 @@ void sched_hold(unsigned why, bool on)
     unsigned was = s_hold;
     s_hold = on ? (s_hold | why) : (s_hold & ~why);
     if (s_hold != was) {
-        ESP_LOGI(TAG, "hold: %s%s%s", s_hold & SCHED_HOLD_FACE ? "waiting for a tap" : "",
-                 s_hold == (SCHED_HOLD_FACE | SCHED_HOLD_MENU) ? ", " : "", s_hold & SCHED_HOLD_MENU ? "menu open" : "");
-        if (!s_hold) {
+        if (s_hold) {
+            ESP_LOGI(TAG, "hold: %s%s%s", s_hold & SCHED_HOLD_FACE ? "waiting for a tap" : "",
+                     s_hold == (SCHED_HOLD_FACE | SCHED_HOLD_MENU) ? ", " : "",
+                     s_hold & SCHED_HOLD_MENU ? "menu open" : "");
+        } else {
             ESP_LOGI(TAG, "hold released");
-        }
-        if (!s_hold) {
             s_last_activity_us = esp_timer_get_time(); /* a real release restarts the idle timer; a repeat does not */
         }
     }

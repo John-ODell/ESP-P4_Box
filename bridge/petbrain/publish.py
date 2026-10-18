@@ -116,7 +116,8 @@ def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier | None:
         server = make_server(cfg["http_host"], cfg["http_port"], notifier)
     except OSError as exc:
         # Most likely another bridge already serves the endpoint: leave its pending list and pet/ack alone.
-        log.error("notify endpoint not started on %s:%s (%s); the GitHub loop runs without notifications",
+        log.error("notify endpoint not started on %s:%s (%s); the GitHub loop runs without notifications "
+                  "or 20 Questions",
                   cfg["http_host"], cfg["http_port"], exc)
         return None
     client.message_callback_add(TOPIC_ACK, lambda c, userdata, msg: notifier.ack(msg.payload))

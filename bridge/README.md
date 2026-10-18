@@ -220,8 +220,9 @@ pet's own hooks never turn a question into a waiting session. A turn takes about
 stand in, for example `PET_Q20_CMD="ollama run llama3.2"` (not tried yet). Quote the value, so `. ./.env` reads it, and
 keep an empty `''` argument off the end of the line: the bridge strips quotes from both ends of a value. A call that
 takes longer than `PET_Q20_TIMEOUT` seconds (default 40), fails or gives an unreadable reply twice ends the game with a
-short message on the box. One model call runs at a time, so a second box gets "busy". Only the bridge that holds the
-notify endpoint answers, so a second bridge started by mistake stays quiet.
+short message on the box. A game cannot start while another game's turn is with the model (it gets "busy"), but a game
+already running is never refused. Only the bridge that holds the notify endpoint answers, so a second bridge started by
+mistake stays quiet.
 
 ## Known limits
 

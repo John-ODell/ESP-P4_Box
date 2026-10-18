@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from petbrain.q20 import (TOPIC_ASK, TOPIC_IN, TURNS, MAX_Q, ModelError, Q20, attach, build_prompt, clean,
-                          parse_reply, run_command)
+from petbrain.q20 import (TOPIC_ASK, TOPIC_IN, TURNS, MAX_Q, Game, ModelError, Q20, attach, build_prompt,
+                          clean, parse_reply, run_command)
 
 
 class Box:
@@ -100,19 +100,61 @@ class GameTests(unittest.TestCase):
         box.send(game=3, op="start")                     # the same box can start again
         self.assertEqual(box.last(), {"game": 3, "n": 1, "q": "Is it alive?"})
 
-    def test_one_model_call_at_a_time(self):
+    def test_a_start_waits_for_another_games_turn(self):
         box = Box()
         held = []
         box.q20._spawn = held.append
         box.send(game=1, op="start")
         box.send(game=2, op="start")
-        self.assertEqual(box.last(), {"game": 2, "error": "Busy with another game. Try again soon."})
+        self.assertEqual(box.last(), {"game": 2, "error": "The pet is busy with another game. Try again soon."})
         self.assertNotIn(2, box.q20._games)
         self.assertEqual(len(held), 1)
         box.replies = ['{"q": "Is it alive?"}']
         held[0]()
         self.assertEqual(box.last(), {"game": 1, "n": 1, "q": "Is it alive?"})
         self.assertEqual(box.q20._calls, 0)
+
+    def test_a_running_game_is_never_refused(self):
+        box = Box('{"q": "Is it alive?"}')
+        box.send(game=1, op="start")                     # game 1 is waiting on its player
+        held = []
+        box.q20._spawn = held.append
+        box.q20._games[2] = box.q20._games.pop(1)        # (as if started under another number)
+        box.send(game=3, op="start")                     # game 3's turn is with the model now
+        box.send(game=2, op="answer", n=1, a="yes")      # game 2 answers meanwhile
+        self.assertEqual(len(held), 2)
+        self.assertEqual(box.sent, [(TOPIC_ASK, {"game": 1, "n": 1, "q": "Is it alive?"})])
+
+    def test_quit_mid_turn_then_start_again(self):
+        box = Box()
+        held = []
+        box.q20._spawn = held.append
+        box.send(game=1, op="start")
+        box.send(game=1, op="quit")                      # closed while the model thinks
+        box.send(game=2, op="start")                     # Play again on the same box
+        self.assertEqual(len(held), 2)
+        self.assertEqual(box.sent, [])
+
+    def test_a_refused_start_evicts_nothing(self):
+        box = Box()
+        held = []
+        box.q20._spawn = held.append
+        for gid in range(1, 5):
+            box.q20._games[gid] = Game()
+        box.q20._games[1].pending = 1
+        box.send(game=9, op="start")
+        self.assertEqual(sorted(box.q20._games), [1, 2, 3, 4])
+
+    def test_a_thread_that_will_not_start_frees_the_slot(self):
+        box = Box()
+        def fail(f):
+            raise RuntimeError("can't start new thread")
+        box.q20._spawn = fail
+        with self.assertLogs("bridge", "ERROR"):
+            box.send(game=1, op="start")
+        self.assertEqual(box.last(), {"game": 1, "error": "Something went wrong on the bridge."})
+        self.assertEqual(box.q20._calls, 0)
+        self.assertNotIn(1, box.q20._games)
 
     def test_no_retry_without_time_left(self):
         box = Box("gibberish", '{"q": "never asked"}')

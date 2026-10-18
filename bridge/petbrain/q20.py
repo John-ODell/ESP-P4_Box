@@ -10,9 +10,10 @@ Bridge -> box on `pet/q20/ask`, never retained:
     {"game": 7, "n": 9, "guess": "a toaster"}
     {"game": 7, "error": "The AI took longer than 40 s."}
 
-`game` is a new number the box picks for every game (at random, so it does not repeat after a reboot). Turns run 1 to 20, and a question or a guess uses one each; turn 20 is
-always a guess. "right" ends the game, and so does "wrong" on turn 20: the box knows both, so nothing is sent back.
-One model call runs at a time; a game that starts while another box's turn is being worked on gets a "busy" error.
+`game` is a new number the box picks for every game (at random, so it does not repeat after a reboot). Turns run 1
+to 20, and a question or a guess uses one each; turn 20 is always a guess. "right" ends the game, and so does "wrong"
+on turn 20: the box knows both, so nothing is sent back. A start while another game's turn is with the model gets a
+"busy" error, so one box cannot fork a model per message; a game already running is never refused.
 
 The model is PET_Q20_CMD, any command that reads the prompt on stdin and prints a reply holding {"q": ...} or
 {"guess": ...}. The default is Claude Code on Haiku with the login already on this computer, so no API key: no tools
@@ -41,6 +42,7 @@ TURNS = 20
 MAX_Q = 120        # characters the box shows for a question
 MAX_GUESS = 60
 MAX_GAMES = 4      # games the bridge remembers; the oldest goes first (a box that vanished mid-game)
+MAX_CALLS = 4      # model calls at once, counting ones whose game was closed while the model was thinking
 DEFAULT_CMD = "claude -p --model haiku --tools '' --setting-sources '' --no-session-persistence"
 DEFAULT_TIMEOUT = 40   # seconds for a turn, retry included; the box gives up after 50
 MIN_RETRY = 5          # seconds a retry needs left, or the turn fails at once
@@ -150,7 +152,7 @@ class Q20:
         self._ask = ask   # (prompt, seconds) -> the model's reply
         self._spawn = spawn or (lambda f: threading.Thread(target=f, daemon=True).start())
         self._games: dict[int, Game] = {}
-        self._calls = 0   # model calls running now: at most one, so a flood of starts cannot fork a flood of models
+        self._calls = 0   # model calls running now, including ones for games already closed
         self._lock = threading.Lock()
 
     def handle(self, payload) -> None:
@@ -166,19 +168,26 @@ class Q20:
         n, a = msg.get("n"), msg.get("a")
         if not isinstance(n, int) or isinstance(n, bool) or not isinstance(a, str):
             n, a = None, None
-        busy = False
         with self._lock:
             game = self._games.get(gid)
             if op == "start" and game is None:
-                while len(self._games) >= MAX_GAMES:
-                    del self._games[next(iter(self._games))]
-                game = self._games[gid] = Game()
-                log.info("q20: game %d started", gid)
+                # Another game's turn is with the model (or too many calls are still finishing for closed games):
+                # refuse before anything is evicted. A game closed mid-turn does not count, so a box that quits and
+                # starts again is not refused.
+                busy = self._calls >= MAX_CALLS or any(g.pending for g in self._games.values())
+                if busy:
+                    log.info("q20: game %d refused: the model is busy with another game", gid)
+                else:
+                    while len(self._games) >= MAX_GAMES:
+                        del self._games[next(iter(self._games))]
+                    game = self._games[gid] = Game()
+                    log.info("q20: game %d started", gid)
             elif op == "quit":
                 self._games.pop(gid, None)
                 log.info("q20: game %d closed on the box", gid)
                 return
             elif op == "answer" and game is not None and game.pending is None and n == len(game.turns):
+                busy = False
                 kind, text, answer = game.turns[-1]
                 if answer is not None or a not in (QUESTION_ANSWERS if kind == "q" else GUESS_ANSWERS):
                     return
@@ -190,18 +199,23 @@ class Q20:
                     return
             else:
                 return
-            if self._calls > 0:   # another game's turn is with the model
-                del self._games[gid]
-                busy = True
-            else:
+            if not busy:
                 self._calls += 1
                 n = game.pending = len(game.turns) + 1
                 prompt = build_prompt(game.turns, n)
         if busy:
-            log.info("q20: game %d refused: the model is busy with another game", gid)
-            self._publish(TOPIC_ASK, json.dumps({"game": gid, "error": "Busy with another game. Try again soon."}))
+            self._publish(TOPIC_ASK, json.dumps({"game": gid, "error": "The pet is busy with another game. Try again "
+                                                                        "soon."}))
             return
-        self._spawn(lambda: self._turn(gid, game, n, prompt))
+        try:
+            self._spawn(lambda: self._turn(gid, game, n, prompt))
+        except Exception:   # no thread for the model: free the slot and the game, and tell the box
+            log.exception("q20: game %d turn %d not started", gid, n)
+            with self._lock:
+                self._calls -= 1
+                if self._games.get(gid) is game:
+                    del self._games[gid]
+            self._publish(TOPIC_ASK, json.dumps({"game": gid, "error": "Something went wrong on the bridge."}))
 
     def _turn(self, gid: int, game: Game, n: int, prompt: str) -> None:
         """Ask the model for turn n (on its own thread: a call takes seconds) and send the box what it said."""

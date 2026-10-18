@@ -84,7 +84,7 @@ static void tick(lv_timer_t *t)
             s_repeat--;
             s_frame = 0;
         } else if (s_sleeping) {
-            s_loop = true;                    /* woken by petting or an event: straight back to sleep */
+            s_loop = true;                    /* a reaction that ends at night goes straight back to sleep */
             start(s_pet->reaction[PET_REACT_SLEEP], true);
             return;
         } else {

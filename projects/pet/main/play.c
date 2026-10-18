@@ -20,7 +20,8 @@ static unsigned s_day;          /* YYYYMMDD of s_eaten, 0 until the clock is fir
 static int s_total = -1;        /* today.total from the bridge, -1 until the first state */
 static unsigned s_total_day;    /* YYYYMMDD the bridge made that total on */
 static int s_awake_min, s_since_save_min;
-static int s_strokes;           /* recent strokes; each minute forgets two, so a rest makes petting count again */
+static int s_strokes;           /* recent strokes, at most what takes the gain to 0; each minute forgets two, so a
+                                   few minutes' rest makes petting count again */
 static bool s_dirty;
 
 static void save(const char *why)
@@ -182,7 +183,7 @@ int play_pet(void)
 {
     int gain = PET_HAPPY_PET - s_strokes / PET_PET_FADE;
     gain = gain > 0 ? gain : 0;
-    if (s_strokes < 1000) {
+    if (s_strokes < PET_HAPPY_PET * PET_PET_FADE) {   /* past this the gain is 0 anyway: a long rub costs no more */
         s_strokes++;
     }
     set_happy(s_happy + gain);

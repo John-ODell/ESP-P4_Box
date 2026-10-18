@@ -16,7 +16,7 @@ for hearts, a happy wiggle and a little happiness (#64), **swipe** any direction
 for 12 s (a swipe within 0.8 s of the last one is ignored, so a flick back does not undo it), **long press** off the
 pet opens the play menu (Feed, Pet Says, Settings, Close; #62). The pet's own area (the box its ink covers in its
 resting frames, logged at boot as `face: pet area`) is for touching the pet: a drag there is petting however fast, and
-a long press there does nothing; a tap there still acknowledges. The menu closes on Close, a tap outside
+a long press there does nothing (it does not acknowledge either); a tap there still acknowledges. The menu closes on Close, a tap outside
 it, or 7 s without a touch, keeps the screen bright while open, and its taps never acknowledge a waiting session.
 
 **Play** (#63, `main/play.c`) is kept apart from the GitHub numbers. The pet earns one snack per contribution today
@@ -127,8 +127,9 @@ Console is UART0 at 115200. Layout:
 - `main/face.c`: the scene: sprite in the middle, numbers around the edge, banner, session bubble, stats overlay.
 - `main/menu.c`: the play menu over the pet. Feed drops a snack (`face_feed()`); Pet Says opens a stub page until
   #65, Settings until the on-box Wi-Fi setup (#53).
-- `main/play.c`: happiness and snacks, saved in NVS. Each stroke adds `PET_HAPPY_PET` (3), one less after every
-  `PET_PET_FADE` (4) strokes in a row, down to nothing; each minute forgets two strokes. Pet Says (#65) will use
+- `main/play.c`: happiness and snacks, saved in NVS. Each stroke adds `PET_HAPPY_PET` (3), one less for every
+  `PET_PET_FADE` (4) recent strokes, down to nothing; each minute forgets two recent strokes (at most 12 are kept),
+  so the gain is back to full after 6 minutes' rest. Pet Says (#65) will use
   `play_add()`.
 - `main/anim.c`: sprite player. Idle animations by weight for the current mood class, reactions that preempt them,
   the sleep loop. Frames are LVGL A8 images scaled 12x with antialiasing off, so each art pixel is a crisp 12x12 block.

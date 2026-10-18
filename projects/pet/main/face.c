@@ -176,7 +176,7 @@ static void snack_landed(lv_anim_t *a)
 }
 
 /* Where the pet's ink is, from its resting frames (every mood), so touches on blank sprite corners still open the
- * menu. Falls back to the whole sprite if a frame is blank. */
+ * menu. Falls back to the whole sprite if every resting frame is blank. */
 static void find_pet_box(void)
 {
     int x1 = PET_SPRITE_W, y1 = PET_SPRITE_H, x2 = -1, y2 = -1;

@@ -41,6 +41,7 @@ static int64_t s_last_swipe_us;   /* when a swipe last toggled the stats, for PE
 static bool s_on_pet;             /* this press started on the pet */
 static bool s_petted;             /* ... and has stroked it at least once */
 static int s_stroke;              /* finger travel over the pet since the last heart */
+static int s_travel;              /* finger travel over the pet in this press */
 static lv_point_t s_last_pt;
 
 static const char *gesture_name(lv_dir_t d)
@@ -132,6 +133,7 @@ static void touch_event_cb(lv_event_t *e)
         s_swiped = false;
         s_on_pet = face_point_on_pet(p);   /* the pet's own area: drags there pet it, a long press does nothing */
         s_stroke = 0;
+        s_travel = 0;
         s_petted = false;
         s_last_pt = p;
         sched_touch(); /* brighten on finger-down, not on release */
@@ -139,10 +141,17 @@ static void touch_event_cb(lv_event_t *e)
         break;
     case LV_EVENT_PRESSING:
         if (s_on_pet && !menu_is_open()) {
-            if (face_point_on_pet(p)) {   /* count only travel over the pet itself */
-                s_stroke += abs((int)(p.x - s_last_pt.x)) + abs((int)(p.y - s_last_pt.y));
+            int step = abs((int)(p.x - s_last_pt.x)) + abs((int)(p.y - s_last_pt.y));
+            if (step >= PET_STROKE_JITTER_PX) {   /* a resting finger's jitter is not a stroke */
+                if (face_point_on_pet(p)) {       /* count only travel over the pet itself */
+                    s_stroke += step;
+                    s_travel += step;
+                }
+                s_last_pt = p;
             }
-            s_last_pt = p;
+            if (s_travel >= PET_STROKE_TAP_PX) {
+                s_swallow_click = true;   /* a rub too short for a heart is still not a tap */
+            }
             if (s_stroke >= PET_STROKE_PX) {
                 s_stroke = 0;
                 if (!s_petted) {
@@ -182,6 +191,7 @@ static void touch_event_cb(lv_event_t *e)
         }
         if (s_on_pet) { /* the pet's area is for touching the pet; the menu opens from anywhere else */
             ESP_LOGI(TAG, "long press on the pet x=%d y=%d: no menu", (int)p.x, (int)p.y);
+            s_swallow_click = true; /* LVGL still sends CLICKED after a long press: it must not acknowledge */
             break;
         }
         s_swallow_click = true;

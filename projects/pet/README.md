@@ -66,9 +66,11 @@ python tools/serial_tail.py -t 60                 # passive UART reader, no DTR/
 ```
 
 **Releases** (#51). Pushing a `pet-vX.Y.Z` tag runs `.github/workflows/release.yml`: it builds this project without
-`secrets.h` from `sdkconfig.defaults`, and `tools/make_manifest.py` merges the build into
-`desk-pet-esp32p4-rev1-vX.Y.Z.bin` (written at 0x2000, the bootloader's offset) plus `manifest.json` for the Workbench
-flasher. A box flashed with it boots to `not set up` until it is given settings.
+`secrets.h` from `sdkconfig.defaults`, and `tools/make_manifest.py` publishes its four images
+(`desk-pet-esp32p4-rev1-vX.Y.Z-{bootloader,partition-table,ota-data-initial,app}.bin`) plus `manifest.json` for the
+Workbench flasher. They stay separate rather than one merged image so that a reinstall without erasing leaves the NVS
+partition, and the settings saved in it, alone. A box flashed with them boots to `not set up` until it is given
+settings.
 
 ```bash
 git tag pet-v1.0.0 && git push origin pet-v1.0.0

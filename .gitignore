@@ -38,6 +38,5 @@ bridge/var/
 bridge/mosquitto/pet.conf
 bridge/mosquitto/passwd
 
-# written by the release workflow from the tag (#51)
-projects/pet/version.txt
+# release images from tools/make_manifest.py (#51)
 dist/

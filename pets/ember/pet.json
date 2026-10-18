@@ -1,0 +1,48 @@
+{
+  "format": 1,
+  "name": "Ember",
+  "sheet": "frames.png",
+  "colors": {"ink": "#F6AD55", "sleep_ink": "#9C6B3A", "background": "#1A0F0A", "panel": "#2A1A12", "dim": "#5C6B78", "accent": "#FC8181", "warn": "#F6AD55", "good": "#68D391"},
+  "animations": {
+    "sad/mope": [{"frame": 1, "dy": 1, "ms": 1400}],
+    "sad/sigh": [{"frame": 2, "ms": 700}, {"frame": 2, "dy": 1, "ms": 700}, {"frame": 0, "ms": 300}],
+    "sad/blink": [{"frame": 2, "ms": 120}],
+    "sad/look_left": [{"frame": 1, "ms": 1300}],
+    "sad/look_right": [{"frame": 3, "ms": 1300}],
+    "neutral/breathe": [{"frame": 4, "ms": 700}, {"frame": 4, "dy": 1, "ms": 700}],
+    "neutral/blink": [{"frame": 5, "ms": 120}],
+    "neutral/look_left": [{"frame": 6, "ms": 1300}],
+    "neutral/look_right": [{"frame": 7, "ms": 1300}],
+    "neutral/yawn": [{"frame": 8, "ms": 500}, {"frame": 9, "ms": 700}, {"frame": 4, "ms": 200}],
+    "happy/breathe": [{"frame": 10, "ms": 700}, {"frame": 10, "dy": 1, "ms": 700}],
+    "happy/blink": [{"frame": 11, "ms": 120}],
+    "happy/look_left": [{"frame": 12, "ms": 1300}],
+    "happy/look_right": [{"frame": 13, "ms": 1300}],
+    "happy/wiggle": [{"frame": 10, "dx": -1, "ms": 120}, {"frame": 10, "dx": 1, "ms": 120}, {"frame": 10, "dx": -1, "ms": 120}, {"frame": 10, "dx": 1, "ms": 120}, {"frame": 10, "ms": 120}],
+    "happy/bounce": [{"frame": 14, "dy": -1, "ms": 90}, {"frame": 14, "dy": -2, "ms": 90}, {"frame": 14, "dy": -1, "ms": 90}, {"frame": 15, "ms": 110}, {"frame": 10, "ms": 150}],
+    "ecstatic/bounce": [{"frame": 17, "dy": -1, "ms": 90}, {"frame": 17, "dy": -2, "ms": 90}, {"frame": 17, "dy": -1, "ms": 90}, {"frame": 18, "ms": 110}, {"frame": 16, "ms": 150}],
+    "ecstatic/wiggle": [{"frame": 16, "dx": -1, "ms": 120}, {"frame": 16, "dx": 1, "ms": 120}, {"frame": 16, "dx": -1, "ms": 120}, {"frame": 16, "dx": 1, "ms": 120}, {"frame": 16, "ms": 120}],
+    "ecstatic/sparkle": [{"frame": 19, "ms": 900}],
+    "ecstatic/blink": [{"frame": 20, "ms": 120}],
+    "ecstatic/breathe": [{"frame": 16, "ms": 700}, {"frame": 16, "dy": 1, "ms": 700}],
+    "worried/glance": [{"frame": 22, "ms": 900}, {"frame": 23, "ms": 900}, {"frame": 21, "ms": 600}],
+    "worried/blink": [{"frame": 5, "ms": 120}],
+    "worried/sigh": [{"frame": 5, "ms": 700}, {"frame": 5, "dy": 1, "ms": 700}, {"frame": 21, "ms": 300}],
+    "worried/mope": [{"frame": 22, "dy": 1, "ms": 1400}],
+    "celebrate": [{"frame": 24, "dy": -1, "ms": 90}, {"frame": 25, "dy": -2, "ms": 90}, {"frame": 26, "dy": -1, "ms": 90}, {"frame": 27, "ms": 110}, {"frame": 28, "ms": 150}, {"frame": 25, "dy": -1, "ms": 90}, {"frame": 26, "dy": -2, "ms": 90}, {"frame": 25, "dy": -1, "ms": 90}, {"frame": 29, "ms": 110}, {"frame": 30, "ms": 200}],
+    "notice": [{"frame": 31, "ms": 500}, {"frame": 32, "ms": 400}],
+    "sleep": [{"frame": 33, "ms": 700}, {"frame": 34, "dy": 1, "ms": 700}, {"frame": 35, "ms": 700}, {"frame": 34, "dy": 1, "ms": 700}]
+  },
+  "moods": {
+    "sad": {"rest": 0, "idle": {"sad/mope": 5, "sad/sigh": 3, "sad/blink": 2, "sad/look_left": 1, "sad/look_right": 1}},
+    "neutral": {"rest": 4, "idle": {"neutral/yawn": 1}},
+    "happy": {"rest": 10, "idle": {"happy/breathe": 3, "happy/blink": 3, "happy/look_left": 2, "happy/look_right": 2, "happy/wiggle": 2, "happy/bounce": 1}},
+    "ecstatic": {"rest": 16, "idle": {"ecstatic/bounce": 3, "ecstatic/wiggle": 3, "ecstatic/sparkle": 3, "ecstatic/blink": 2, "ecstatic/breathe": 1}},
+    "worried": {"rest": 21, "idle": {"worried/glance": 5, "worried/blink": 2, "worried/sigh": 2, "worried/mope": 1}}
+  },
+  "play": {
+    "snack": [{"frame": 36, "ms": 300}, {"frame": 37, "ms": 300}],
+    "heart": [{"frame": 38, "ms": 250}, {"frame": 39, "ms": 350}],
+    "pads": ["#4FD1C5", "#F6AD55", "#68D391", "#B794F4"]
+  }
+}

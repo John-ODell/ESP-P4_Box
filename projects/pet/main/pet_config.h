@@ -28,6 +28,14 @@
 #define PET_MENU_IDLE_MS    7000     /* play menu closes after this long without a touch */
 #define PET_SWIPE_COOLDOWN_MS 800    /* after a swipe toggles the stats, later swipes wait this long */
 
+/* Play (#63): the pet's own happiness, apart from mood/XP/streak. */
+#define PET_HAPPY_START      60      /* first boot */
+#define PET_HAPPY_FLOOR      20      /* drift never goes below this */
+#define PET_HAPPY_DECAY_MIN  15      /* one point down per this many awake minutes (asleep: no drift) */
+#define PET_HAPPY_FEED       8       /* per snack */
+#define PET_PLAY_SAVE_MIN    10      /* drift is saved to NVS at most this often; feeding saves at once */
+#define PET_SNACK_SCALE      4       /* the falling fish: 48x40 art drawn 4x */
+
 /* Session notifications (milestone 6): while an AI session waits for a person, the character takes that source's
  * colour and a bubble names the session. Sources are what the senders in bridge/hooks/ and bridge/notify.py put in
  * `source`; anything else gets PET_COLOR_OTHER. */

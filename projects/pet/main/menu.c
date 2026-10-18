@@ -1,11 +1,12 @@
 /* The play menu (#62): a long press opens it over the pet. Feed closes the menu and drops a snack (#63), or says why
- * there is none; Pet Says starts the memory game (#65); Settings opens a stub page until #53. Close, a tap outside the
+ * there is none; Pet Says starts the memory game (#65); 20 Questions starts the guessing game (#78); Settings opens a stub page until #53. Close, a tap outside the
  * panel, or PET_MENU_IDLE_MS without a touch closes it. Its objects catch their own taps, which do not bubble to the
  * screen, so menu taps never acknowledge a waiting AI session; MQTT state and notices keep updating the face
  * underneath. */
 #include "menu.h"
 #include "face.h"
 #include "play.h"
+#include "q20.h"
 #include "says.h"
 #include "pet_config.h"
 #include "sched.h"
@@ -17,11 +18,12 @@ static const char *TAG = "menu";
 #define PANEL_W 540
 #define ITEM_H  96
 
-enum { ITEM_FEED, ITEM_SAYS, ITEM_SETTINGS, ITEM_CLOSE, ITEMS };
-static const char *const ITEM_LABEL[ITEMS] = {"Feed", "Pet Says", "Settings", "Close"};
+enum { ITEM_FEED, ITEM_SAYS, ITEM_Q20, ITEM_SETTINGS, ITEM_CLOSE, ITEMS };
+static const char *const ITEM_LABEL[ITEMS] = {"Feed", "Pet Says", "20 Questions", "Settings", "Close"};
 static const char *const PAGE_TEXT[ITEM_CLOSE] = {
     "No snacks left today. Go make a commit!",   /* replaced while the bridge has not sent today's total */
     NULL,   /* Pet Says opens the game, not a page */
+    NULL,   /* and so does 20 Questions */
     "Coming with Wi-Fi setup.",
 };
 
@@ -71,6 +73,9 @@ static void item_cb(lv_event_t *e)
     } else if (item == ITEM_SAYS) {
         menu_close("pet says");
         says_open();
+    } else if (item == ITEM_Q20) {
+        menu_close("20 questions");
+        q20_open();
     } else if (item == ITEM_FEED && play_snacks() > 0) {
         menu_close("feed");   /* the pet eats in full view */
         face_feed();          /* while a snack is still falling it says so instead */

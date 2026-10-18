@@ -16,6 +16,7 @@
 #include "bsp/display.h"
 #include "face.h"
 #include "menu.h"
+#include "q20.h"
 #include "says.h"
 #include "pet_pack.h"
 #include "play.h"
@@ -375,6 +376,13 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
         ESP_LOGI(TAG, "event: %.*s", (int)len, payload);
     } else if (strcmp(topic, PET_TOPIC_CMD) == 0) {
         on_cmd(payload, len, retained);
+    } else if (strcmp(topic, PET_TOPIC_Q20_ASK) == 0 && !retained) {   /* a turn of 20 Questions (#78) */
+        if (bsp_display_lock(500)) {
+            q20_on_msg(payload, len);
+            bsp_display_unlock();
+        } else {
+            ESP_LOGW(TAG, "could not take the display lock; 20 Questions turn dropped");
+        }
     }
 }
 
@@ -406,6 +414,7 @@ void app_main(void)
     face_create(scr, pet);
     menu_create(scr, pet);
     says_create(scr, pet);   /* over the menu: the menu closes as the game opens */
+    q20_create(scr, pet);
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr, touch_event_cb, LV_EVENT_ALL, NULL);
     sched_start();

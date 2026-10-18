@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
@@ -34,6 +35,8 @@ static pet_notify_t s_notify;   /* the waiting sessions, newest first; touched o
 static pet_notice_t s_top_seen; /* the newest entry ever on top of the list, same lock; later than it is news */
 static int s_shown;             /* index in s_notify of the entry in the bubble, 0 the newest; same lock */
 static bool s_swallow_click;   /* LVGL fires CLICKED after a gesture or long press; ignore that one */
+static bool s_swiped;             /* this press already swiped: it must not also become a long press */
+static int64_t s_last_swipe_us;   /* when a swipe last toggled the stats, for PET_SWIPE_COOLDOWN_MS */
 
 static const char *gesture_name(lv_dir_t d)
 {
@@ -121,6 +124,7 @@ static void touch_event_cb(lv_event_t *e)
     case LV_EVENT_PRESSED:
         s_swallow_click = false; /* a long press that opened the menu never gets its CLICKED: the press moved to the
                                     overlay, so clear the swallow here or the next real tap is eaten */
+        s_swiped = false;
         sched_touch(); /* brighten on finger-down, not on release */
         ESP_LOGI(TAG, "touch down  x=%d y=%d", (int)p.x, (int)p.y);
         break;
@@ -146,6 +150,10 @@ static void touch_event_cb(lv_event_t *e)
         face_ack();
         break;
     case LV_EVENT_LONG_PRESSED:
+        if (s_swiped) { /* LVGL still fires a long press when the finger rests after a swipe */
+            ESP_LOGI(TAG, "long press after a swipe: ignored");
+            break;
+        }
         s_swallow_click = true;
         sched_touch();
         ESP_LOGI(TAG, "long press  x=%d y=%d -> menu", (int)p.x, (int)p.y);
@@ -156,8 +164,16 @@ static void touch_event_cb(lv_event_t *e)
             break; /* belt and braces: menu.c already stops gestures bubbling out of the overlay */
         }
         s_swallow_click = true;
+        s_swiped = true;
         sched_touch();
         lv_dir_t d = lv_indev_get_gesture_dir(indev);
+        int64_t now = esp_timer_get_time();
+        if (now - s_last_swipe_us < PET_SWIPE_COOLDOWN_MS * 1000LL) { /* a flick back right after a swipe */
+            ESP_LOGI(TAG, "swipe %s: ignored, %d ms after the last", gesture_name(d),
+                     (int)((now - s_last_swipe_us) / 1000));
+            break;
+        }
+        s_last_swipe_us = now;
         ESP_LOGI(TAG, "swipe %s -> stats", gesture_name(d));
         face_toggle_stats();
         break;

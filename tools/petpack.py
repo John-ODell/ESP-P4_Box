@@ -42,7 +42,7 @@ SHEET_W = COLS * W       # sheets are exactly 8 frames wide, so frame numbers ne
 MAX_SHEET_ROWS = MAX_FRAMES // COLS
 REPO = Path(__file__).resolve().parent.parent
 C_DIR = REPO / "projects" / "pet" / "main"
-HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+HEX = re.compile(r"#[0-9A-Fa-f]{6}")  # used with fullmatch
 NAME_RE = re.compile(r"[a-z0-9_]+(/[a-z0-9_]+)?")  # used with fullmatch
 
 
@@ -254,7 +254,7 @@ def check(meta, frames):
         e.append("colors must be an object")
         colors = {}
     for key in COLOR_KEYS:
-        if not isinstance(colors.get(key), str) or not HEX.match(colors[key]):
+        if not isinstance(colors.get(key), str) or not HEX.fullmatch(colors[key]):
             e.append(f"colors.{key} must be a colour like \"#E6F0F5\"")
     for key in set(colors) - set(COLOR_KEYS):
         e.append(f"colors.{key} is not a known colour ({', '.join(COLOR_KEYS)})")
@@ -301,7 +301,7 @@ def check(meta, frames):
     for key in ("snack", "heart"):
         frame_list(play.get(key), f"play.{key}", n, e)
     pads = play.get("pads")
-    if not isinstance(pads, list) or len(pads) != 4 or not all(isinstance(c, str) and HEX.match(c) for c in pads):
+    if not isinstance(pads, list) or len(pads) != 4 or not all(isinstance(c, str) and HEX.fullmatch(c) for c in pads):
         e.append("play.pads must be four colours like \"#4FD1C5\"")
     known = {"format", "name", "sheet", "colors", "animations", "moods", "play"}
     for key in set(meta) - known:

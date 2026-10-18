@@ -212,6 +212,11 @@ class Errors(unittest.TestCase):
         self.assertIn("ms must be", e)
         self.assertIn("dx must be", e)
 
+    def test_colour_with_a_trailing_newline(self):
+        # re's $ also matches before a final newline; the box refuses "#E6F0F5\n", so check must too
+        self.assertIn("colors.ink", self.errors(lambda m: m["colors"].update(ink="#E6F0F5\n")))
+        self.assertIn("play.pads", self.errors(lambda m: m["play"].update(pads=["#4FD1C5\n"] * 4)))
+
     def test_pads_need_four_colours(self):
         self.assertIn("play.pads", self.errors(lambda m: m["play"].update(pads=["#000000"])))
 

@@ -28,6 +28,8 @@ static const char *TAG = "pet_pack";
 #define MAX_NAME_CHARS  24
 #define MAX_NAME_BYTES  48
 #define MAX_PACK        (PACK_HEADER + MAX_JSON + MAX_FRAMES * FRAME_BYTES)
+#define MAX_DEPTH       8      /* format 1 nests 4 deep */
+#define MAX_FIELDS      MAX_ANIMS   /* the most keys any format 1 object has */
 
 static const char *const MOOD_KEYS[PET_MOOD_CLASSES] = {"sad", "neutral", "happy", "ecstatic", "worried"};
 static const char *const REACTION_KEYS[PET_REACTIONS] = {"celebrate", "notice", "sleep"};
@@ -128,6 +130,117 @@ static int anim_index(const pet_def_t *def, const char *name)
     return -1;
 }
 
+/* Characters in a UTF-8 string, or -1 if it is not well-formed UTF-8 or holds a control character (C0, DEL, C1). */
+static int utf8_chars(const char *s, size_t len)
+{
+    int chars = 0;
+    for (size_t i = 0; i < len; chars++) {
+        unsigned char c = s[i];
+        uint32_t cp;
+        int more;
+        if (c < 0x80) {
+            cp = c, more = 0;
+        } else if (c >= 0xc2 && c <= 0xdf) {
+            cp = c & 0x1f, more = 1;
+        } else if (c >= 0xe0 && c <= 0xef) {
+            cp = c & 0x0f, more = 2;
+        } else if (c >= 0xf0 && c <= 0xf4) {
+            cp = c & 0x07, more = 3;
+        } else {
+            return -1;
+        }
+        if (i + more >= len && more) {
+            return -1;
+        }
+        for (int k = 1; k <= more; k++) {
+            unsigned char cc = s[i + k];
+            if ((cc & 0xc0) != 0x80) {
+                return -1;
+            }
+            cp = cp << 6 | (cc & 0x3f);
+        }
+        static const uint32_t min[4] = {0, 0x80, 0x800, 0x10000};
+        if (cp < min[more] || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) || cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) {
+            return -1;
+        }
+        i += 1 + more;
+    }
+    return chars;
+}
+
+/* [a-z0-9_]+ with at most one / that has a part on each side, as petpack.py's NAME_RE. */
+static bool anim_name_ok(const char *s)
+{
+    int slashes = 0;
+    size_t n = strlen(s);
+    if (n == 0 || s[0] == '/' || s[n - 1] == '/') {
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] == '/') {
+            slashes++;
+        } else if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) {
+            return false;
+        }
+    }
+    return slashes <= 1;
+}
+
+/* Before cJSON sees the text. cJSON recurses once per [ or { at about 96 bytes of stack a level, so a pack nested a
+ * few hundred deep (a few hundred bytes, any CRC) would overflow the 10 KB main task and the box would reboot on the
+ * same pack forever. Also refuses \u0000, which would cut a C string short. */
+static bool json_shape_ok(const char *s, size_t n)
+{
+    int depth = 0;
+    bool in_string = false;
+    for (size_t i = 0; i < n; i++) {
+        char c = s[i];
+        if (in_string) {
+            if (c == '\\') {
+                if (i + 5 < n && s[i + 1] == 'u' && memcmp(s + i + 2, "0000", 4) == 0) {
+                    return bad("pack metadata contains \\u0000");
+                }
+                i++;
+            } else if (c == '"') {
+                in_string = false;
+            }
+        } else if (c == '"') {
+            in_string = true;
+        } else if (c == '{' || c == '[') {
+            if (++depth > MAX_DEPTH) {
+                return bad("pack metadata is nested more than %d deep", MAX_DEPTH);
+            }
+        } else if (c == '}' || c == ']') {
+            depth--;
+        }
+    }
+    return true;
+}
+
+/* Every object in the tree: at most MAX_FIELDS keys, none twice. cJSON reads the first of two equal keys and Python
+ * the last, so a pack with duplicates could mean different things to the box and to petpack.py. Depth is bounded by
+ * json_shape_ok, so the recursion is too. */
+static bool keys_ok(const cJSON *node)
+{
+    int fields = 0;
+    for (const cJSON *a = node->child; a; a = a->next) {
+        if (cJSON_IsObject(node)) {
+            if (++fields > MAX_FIELDS) {
+                return bad("an object in the pack metadata has more than %d fields", MAX_FIELDS);
+            }
+            for (const cJSON *b = a->next; b; b = b->next) {
+                if (strcmp(a->string, b->string) == 0) {
+                    return bad("pack metadata has the key \"%.32s\" twice in one object", a->string);
+                }
+            }
+        }
+        if (!keys_ok(a)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Counts first, so one block can be sized before anything is filled in; shape errors surface here. */
 typedef struct { int anims, anim_frames, idle; } counts_t;
 
@@ -189,18 +302,15 @@ static bool fill(const cJSON *root, int nframes, pet_def_t *def, arena_t *ar, pe
     }
 
     const char *name = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "name"));
-    size_t len = name ? strlen(name) : 0, chars = 0;
-    for (size_t i = 0; i < len; i++) {
-        unsigned char ch = name[i];
-        if (ch < 0x20 || ch == 0x7f) {
-            len = 0;
-        }
-        chars += (ch & 0xc0) != 0x80;
-    }
-    if (len < 1 || len > MAX_NAME_BYTES || chars > MAX_NAME_CHARS) {
-        return bad("name must be 1 to %d printable characters", MAX_NAME_CHARS);
+    size_t len = name ? strlen(name) : 0;
+    int chars = utf8_chars(name, len);
+    if (len < 1 || len > MAX_NAME_BYTES || chars < 1 || chars > MAX_NAME_CHARS) {
+        return bad("name must be 1 to %d characters of UTF-8 text with no control characters", MAX_NAME_CHARS);
     }
     char *copy = take(ar, len + 1);
+    if (!copy) {
+        return bad("pet does not fit its memory block (a loader bug)");
+    }
     memcpy(copy, name, len + 1);
     def->name = copy;
 
@@ -220,11 +330,15 @@ static bool fill(const cJSON *root, int nframes, pet_def_t *def, arena_t *ar, pe
     const cJSON *a;
     cJSON_ArrayForEach(a, cJSON_GetObjectItemCaseSensitive(root, "animations")) {
         size_t nl = strlen(a->string);
-        if (nl < 1 || nl > MAX_ANIM_NAME || strspn(a->string, "abcdefghijklmnopqrstuvwxyz0123456789_/") != nl) {
-            return bad("animation name \"%.32s\" is not allowed", a->string);
+        if (nl > MAX_ANIM_NAME || !anim_name_ok(a->string)) {
+            return bad("animation name \"%.32s\": up to %d of a-z 0-9 _ with one optional / inside", a->string,
+                       MAX_ANIM_NAME);
         }
         pet_anim_t *an = &anims[def->anim_count];
         char *nm = take(ar, nl + 1);
+        if (!nm) {
+            return bad("pet does not fit its memory block (a loader bug)");
+        }
         memcpy(nm, a->string, nl + 1);
         an->name = nm;
         an->frames = frames;
@@ -388,15 +502,26 @@ static const pet_def_t *load(void)
     while (n && buf[PACK_HEADER + n - 1] == 0) {
         n--;
     }
+    const char *js = (const char *)buf + PACK_HEADER, *end = NULL;
+    if (!json_shape_ok(js, n)) {
+        goto out;
+    }
     cJSON_Hooks hooks = { .malloc_fn = chunk_malloc, .free_fn = chunk_free };
     cJSON_InitHooks(&hooks);
-    root = cJSON_ParseWithLength((const char *)buf + PACK_HEADER, n);
+    root = cJSON_ParseWithLengthOpts(js, n, &end, false);
     if (!cJSON_IsObject(root)) {
         bad("pack metadata is not a JSON object");
         goto out;
     }
+    while (end < js + n && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) {
+        end++;
+    }
+    if (end != js + n) {
+        bad("pack metadata has text after the JSON object");
+        goto out;
+    }
     counts_t c;
-    if (!count(root, &c)) {
+    if (!keys_ok(root) || !count(root, &c)) {
         goto out;
     }
     ar.size = sizeof(pet_def_t) + nframes * (sizeof(lv_image_dsc_t) + sizeof(void *) + FRAME_PIXELS)
@@ -408,9 +533,15 @@ static const pet_def_t *load(void)
         goto out;
     }
     def = take(&ar, sizeof(*def));
-    def->anims = take(&ar, c.anims * sizeof(pet_anim_t));
+    pet_anim_t *anims = take(&ar, c.anims * sizeof(pet_anim_t));
     pet_frame_t *frames = take(&ar, c.anim_frames * sizeof(pet_frame_t));
     pet_idle_choice_t *idle = take(&ar, c.idle * sizeof(pet_idle_choice_t));
+    if (!def || !anims || !frames || !idle) {
+        bad("pet does not fit its memory block (a loader bug)");
+        def = NULL;
+        goto out;
+    }
+    def->anims = anims;
     if (!fill(root, nframes, def, &ar, frames, idle)) {
         def = NULL;
         goto out;
@@ -419,6 +550,11 @@ static const pet_def_t *load(void)
     lv_image_dsc_t *dsc = take(&ar, nframes * sizeof(lv_image_dsc_t));
     const lv_image_dsc_t **images = take(&ar, nframes * sizeof(void *));
     uint8_t *pixels = take(&ar, nframes * FRAME_PIXELS);
+    if (!dsc || !images || !pixels) {
+        bad("pet does not fit its memory block (a loader bug)");
+        def = NULL;
+        goto out;
+    }
     const uint8_t *bits = buf + PACK_HEADER + jlen;
     for (int i = 0; i < nframes; i++) {
         uint8_t *px = pixels + i * FRAME_PIXELS;

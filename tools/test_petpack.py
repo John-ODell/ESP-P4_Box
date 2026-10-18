@@ -54,30 +54,121 @@ class Dolphin(unittest.TestCase):
             self.assertEqual(pp.sheet_frames(Path(d, "s.png")), self.frames)
 
 
+def chunk(tag, body):
+    return struct.pack(">I", len(body)) + tag + body + struct.pack(">I", zlib.crc32(tag + body) & 0xFFFFFFFF)
+
+
+def paeth(a, b, c):
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    return a if pa <= pb and pa <= pc else b if pb <= pc else c
+
+
+def make_png(w, h, ctype, depth, lines, filt=0, extra=b"", interlace=0):
+    """A PNG from unfiltered scanlines (bytes each), every row encoded with filter type filt."""
+    bpp = max(1, {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype] * depth // 8)
+    out, prev = b"", bytes(len(lines[0]))
+    for line in lines:
+        enc = bytearray()
+        for x, v in enumerate(line):
+            a = line[x - bpp] if x >= bpp else 0
+            b, c = prev[x], prev[x - bpp] if x >= bpp else 0
+            pred = [0, a, b, (a + b) // 2, paeth(a, b, c)][filt]
+            enc.append((v - pred) & 255)
+        out += bytes([filt]) + bytes(enc)
+        prev = line
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, depth, ctype, 0, 0, interlace))
+            + extra + chunk(b"IDAT", zlib.compress(out)) + chunk(b"IEND", b""))
+
+
+def pattern(x, y):
+    """Ink on a diagonal and the frame border, so every filter has varied neighbours to predict from."""
+    return (x + 2 * y) % 7 == 0 or x % pp.W == 0 or y % pp.H == 0
+
+
 class Png(unittest.TestCase):
+    W8 = pp.SHEET_W
+
+    def read(self, data):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "p.png").write_bytes(data)
+            return pp.sheet_frames(Path(d, "p.png"))
+
+    def expected(self, h=pp.H):
+        return [bytes(int(pattern(c % pp.COLS * pp.W + x, c // pp.COLS * pp.H + y))
+                      for y in range(pp.H) for x in range(pp.W)) for c in range(pp.COLS * h // pp.H)]
+
+    def rgb_lines(self, h=pp.H):
+        return [bytes(v for x in range(self.W8) for v in ((0, 0, 0) if pattern(x, y) else (255, 255, 255)))
+                for y in range(h)]
+
+    def test_every_row_filter(self):
+        for filt in range(5):
+            with self.subTest(filter=filt):
+                self.assertEqual(self.read(make_png(self.W8, pp.H, 2, 8, self.rgb_lines(), filt)), self.expected())
+
+    def test_low_bit_depth_grey(self):
+        for depth in (1, 2, 4):
+            with self.subTest(depth=depth):
+                per, top = 8 // depth, (1 << depth) - 1
+                lines = []
+                for y in range(pp.H):
+                    vals = [0 if pattern(x, y) else top for x in range(self.W8)]
+                    lines.append(bytes(sum(v << (8 - depth * (i + 1)) for i, v in enumerate(vals[k:k + per]))
+                                       for k in range(0, self.W8, per)))
+                self.assertEqual(self.read(make_png(self.W8, pp.H, 0, depth, lines, filt=1)), self.expected())
+
     def test_palette_with_transparency(self):
-        # 1-bit palette PNG, index 0 transparent, index 1 black: what a pixel editor might save
-        w, h = pp.W, pp.H
-        rows = b"".join(b"\x00" + bytes([0x80 if y == 0 else 0] + [0] * (w // 8 - 1)) for y in range(h))
-
-        def chunk(tag, body):
-            return struct.pack(">I", len(body)) + tag + body + struct.pack(">I", zlib.crc32(tag + body) & 0xFFFFFFFF)
-
-        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 1, 3, 0, 0, 0))
-               + chunk(b"PLTE", bytes([255, 255, 255, 0, 0, 0])) + chunk(b"tRNS", b"\x00")
-               + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
-        with tempfile.TemporaryDirectory() as d:
-            Path(d, "p.png").write_bytes(png)
-            frames = pp.sheet_frames(Path(d, "p.png"))
-        self.assertEqual(len(frames), 1)
+        # 1-bit palette PNG, index 0 transparent black, index 1 black: what a pixel editor might save
+        lines = [bytes([0x80 if y == 0 else 0] + [0] * (self.W8 // 8 - 1)) for y in range(pp.H)]
+        frames = self.read(make_png(self.W8, pp.H, 3, 1, lines,
+                                    extra=chunk(b"PLTE", bytes([0, 0, 0, 0, 0, 0])) + chunk(b"tRNS", b"\x00")))
+        self.assertEqual(len(frames), pp.COLS)
         self.assertEqual(frames[0][0], 1)
-        self.assertEqual(sum(frames[0]), 1)
+        self.assertEqual(sum(map(sum, frames)), 1)
 
-    def test_not_a_grid(self):
-        with tempfile.TemporaryDirectory() as d:
-            pp.png_write(Path(d, "p.png"), 50, 40, lambda x, y: (0, 0, 0))
-            with self.assertRaisesRegex(pp.PetError, "grid"):
-                pp.sheet_frames(Path(d, "p.png"))
+    def test_transparent_colour_key_for_grey_and_rgb(self):
+        # black marked transparent with tRNS: nothing is ink
+        black = [bytes(self.W8 * 3)] * pp.H
+        self.assertEqual(sum(map(sum, self.read(make_png(self.W8, pp.H, 2, 8, black, extra=chunk(b"tRNS", bytes(6)))))), 0)
+        grey = [bytes(self.W8)] * pp.H
+        self.assertEqual(sum(map(sum, self.read(make_png(self.W8, pp.H, 0, 8, grey, extra=chunk(b"tRNS", bytes(2)))))), 0)
+        self.assertEqual(sum(map(sum, self.read(make_png(self.W8, pp.H, 0, 8, grey)))), self.W8 * pp.H)
+
+    def test_blank_cells_are_kept(self):
+        # frame numbers follow the picture, so a blank cell (and blank ones at the end) still counts
+        white = bytes([0xFF] * (self.W8 // 8))
+        lines = [bytes([0x7F]) + white[1:] if y == pp.H else white for y in range(2 * pp.H)]
+        frames = self.read(make_png(self.W8, 2 * pp.H, 0, 1, lines))
+        self.assertEqual(len(frames), 2 * pp.COLS)
+        self.assertEqual([k for k, f in enumerate(frames) if any(f)], [pp.COLS])
+
+    def test_interlaced_refused(self):
+        with self.assertRaisesRegex(pp.PetError, "interlac"):
+            self.read(make_png(self.W8, pp.H, 2, 8, self.rgb_lines(), interlace=1))
+
+    def test_sheet_must_be_eight_frames_wide(self):
+        for w, h in ((50, 40), (pp.W, pp.H), (self.W8, 50)):
+            with self.subTest(size=(w, h)), tempfile.TemporaryDirectory() as d:
+                pp.png_write(Path(d, "p.png"), w, h, lambda x, y: (0, 0, 0))
+                with self.assertRaisesRegex(pp.PetError, "384 pixels wide"):
+                    pp.sheet_frames(Path(d, "p.png"))
+
+    def test_damaged_files_give_readable_errors(self):
+        good = make_png(self.W8, pp.H, 2, 8, self.rgb_lines())
+        idat = good.index(b"IDAT")
+        corrupt = bytearray(good)
+        corrupt[idat + 10:idat + 20] = bytes(10)
+        short = make_png(self.W8, pp.H, 2, 8, self.rgb_lines(pp.H - 1))
+        short = short.replace(struct.pack(">I", pp.H - 1), struct.pack(">I", pp.H), 1)
+        bad_filter = (good[:good.index(b"IDAT") - 4]
+                      + chunk(b"IDAT", zlib.compress(b"".join(b"\x07" + line for line in self.rgb_lines())))
+                      + chunk(b"IEND", b""))
+        cases = {"cut off": good[:idat + 30], "damaged PNG image data": bytes(corrupt),
+                 "too short": short, "unknown row filter": bad_filter, "not a PNG": b"GIF89a"}
+        for why, data in cases.items():
+            with self.subTest(why), self.assertRaisesRegex(pp.PetError, why):
+                self.read(data)
 
     def test_light_and_transparent_pixels_are_empty(self):
         self.assertTrue(pp.is_ink((0, 0, 0, 255)))
@@ -127,6 +218,35 @@ class Errors(unittest.TestCase):
     def test_unknown_field(self):
         self.assertIn("sound is not a known field", self.errors(lambda m: m.update(sound="beep")))
 
+    def test_bools_and_floats_are_not_numbers(self):
+        cases = {
+            "format": lambda m: m.update(format=1.0),
+            "frame": lambda m: m["animations"]["notice"][0].update(frame=True),
+            "ms": lambda m: m["animations"]["notice"][0].update(ms=120.0),
+            "dx": lambda m: m["animations"]["notice"][0].update(dx=False),
+            "rest": lambda m: m["moods"]["happy"].update(rest=10.0),
+            "weight": lambda m: m["moods"]["happy"]["idle"].update({"happy/blink": True}),
+        }
+        for field, change in cases.items():
+            with self.subTest(field):
+                self.assertNotEqual(self.errors(change), "")
+
+    def test_animation_names(self):
+        def add(name):
+            return lambda m: m["animations"].update({name: [{"frame": 0}]})
+        self.assertIn("animation name", self.errors(add("celebrate\n")))
+        self.assertIn("animation name", self.errors(add("a" * 33)))
+        self.assertIn("reserved", self.errors(add("count")))
+        self.assertIn("too alike", self.errors(add("happy_wiggle")))
+        self.assertEqual(self.errors(add("a" * 32)), "")
+
+    def test_pet_name(self):
+        for bad in ("Dol\nphin", "x" * 25, "\u00e9" * 25, "\U0001F42C" * 13, "\t"):
+            with self.subTest(repr(bad)):
+                self.assertIn("name must be", self.errors(lambda m: m.update(name=bad)))
+        self.assertEqual(self.errors(lambda m: m.update(name="Flipper the 2nd")), "")
+        self.assertEqual(self.errors(lambda m: m.update(name="\u00e9" * 24)), "")
+
     def test_build_refuses_a_bad_pet(self):
         meta = copy.deepcopy(self.meta)
         meta["name"] = ""
@@ -136,8 +256,50 @@ class Errors(unittest.TestCase):
 
 class Parse(unittest.TestCase):
     def setUp(self):
-        meta, frames = pp.load(DOLPHIN)
-        self.blob = pp.build(meta, frames)
+        self.meta, self.frames = pp.load(DOLPHIN)
+        self.blob = pp.build(self.meta, self.frames)
+
+    def repack(self, js, frames=b""):
+        """A pack with this raw metadata and frame data and a correct header and checksum."""
+        js += b"\0" * (-len(js) % 4)
+        body = struct.pack("<I", len(js)) + js + frames
+        total = 20 + len(body)
+        return pp.MAGIC + struct.pack("<II", pp.FORMAT, total) + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF) + body
+
+    def test_build_leaves_out_unused_cells_at_the_end(self):
+        meta, frames = pp.parse(pp.build(self.meta, self.frames + [bytes(pp.W * pp.H)] * 8))
+        self.assertEqual(len(frames), len(self.frames))
+
+    def test_metadata_size_limit(self):
+        meta = copy.deepcopy(self.meta)
+        for k in range(90):
+            meta["animations"][f"long/a{k}"] = [{"frame": 1, "dx": 1, "dy": 1, "ms": 1000}] * 64
+        with self.assertRaisesRegex(pp.PetError, "at most 65536"):
+            pp.build(meta, self.frames)
+
+    def test_bad_metadata(self):
+        frames = b"".join(pp.pack_bits(f) for f in self.frames)
+        good = json.loads(self.blob[24:24 + struct.unpack_from("<I", self.blob, 20)[0]].rstrip(b"\0"))
+        cases = {
+            "not valid JSON": b"{nope",
+            "not valid JSON ": b'{"name": "\xff"}',
+            "not a JSON object": b"[1, 2]",
+            "frames are 32x40": json.dumps(dict(good, frame_w=32)).encode(),
+            "frame count": json.dumps(dict(good, frame_count=3)).encode(),
+            "moods.sad is required": json.dumps(dict(good, moods={k: v for k, v in good["moods"].items()
+                                                                   if k != "sad"})).encode(),
+        }
+        for why, js in cases.items():
+            with self.subTest(why), self.assertRaisesRegex(pp.PetError, why.strip()):
+                pp.parse(self.repack(js, frames))
+
+    def test_metadata_length_out_of_range(self):
+        for jlen in (3, len(self.blob), pp.MAX_JSON + 4):
+            blob = bytearray(self.blob)
+            struct.pack_into("<I", blob, 20, jlen)
+            struct.pack_into("<I", blob, 16, zlib.crc32(blob[20:]) & 0xFFFFFFFF)
+            with self.subTest(jlen), self.assertRaisesRegex(pp.PetError, "metadata length"):
+                pp.parse(bytes(blob))
 
     def test_bad_magic(self):
         with self.assertRaisesRegex(pp.PetError, "magic"):

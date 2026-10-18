@@ -4,7 +4,7 @@ Each folder here is one pet. `dolphin/` is the one built into the firmware.
 
 ```
 pets/dolphin/
-  frames.png   every frame, 48x40 pixels each, 8 per row, no gaps between them
+  frames.png   every frame, 48x40 pixels each, 8 per row (384 pixels wide), no gaps between them
   pet.json     what the frames mean: animations, moods, colours, play looks
 ```
 
@@ -14,7 +14,8 @@ pets/dolphin/
 2. Draw in `frames.png` with any pixel editor (Aseprite, Piskel, GIMP, Photoshop with a 48x40 grid). A pixel is **ink**
    when it is dark and opaque. Black on white, or black on transparency, is the easy way. Any other pixel is empty.
    The box paints ink in the pet's `ink` colour (or `sleep_ink` while asleep), so the colours in the file do not
-   matter. Frame `k` sits at row `k // 8`, column `k % 8`, counting from 0. Add rows at the bottom for new frames.
+   matter. Frame `k` sits at row `k // 8`, column `k % 8`, counting from 0. The sheet is always 8 frames wide; add
+   rows at the bottom for new frames. Blank cells keep their numbers, so nothing moves when you leave a gap.
 3. Edit `pet.json` (below) to point animations at your frames.
 4. Check and preview it:
 
@@ -57,12 +58,13 @@ which rewrites `projects/pet/main/sprites.c` and `sprites.h`. Then rebuild.
 
 - **animations**: any number, each a list of frames. Every frame has `frame` (its number in the sheet), and optionally
   `dx` and `dy` to nudge it by -8 to 8 art pixels, and `ms` for how long it shows (20 to 10000, default 500). Names are
-  lowercase, with an optional `/`, like `happy/wiggle`. `celebrate` (goals, big days, level up), `notice` (an AI
+  lowercase letters, digits and `_`, up to 32 characters, with an optional `/`, like `happy/wiggle`. `celebrate` (goals, big days, level up), `notice` (an AI
   session waits) and `sleep` (looped at night) must exist.
 - **moods**: all five, `sad`, `neutral`, `happy`, `ecstatic` and `worried` (the streak is at risk). `rest` is the frame
   shown between animations. `idle` lists the animations that play in that mood, each with a weight from 1 to 255:
   a weight of 4 plays four times as often as a weight of 1. Moods come from GitHub activity; a pet pack only changes
   how they look.
+- **name**: what the box calls the pet, 1 to 24 printable characters.
 - **colors**: `ink` is the pet itself, `sleep_ink` the pet at night, `background` and `panel` the screen and overlays,
   `dim` secondary text, `accent`, `warn` and `good` the highlights (level bar, streak at risk, goal hit).
 - **play**: `snack` is what the pet eats when fed, `heart` shows when it is petted, `pads` are the four Pet Says colours.

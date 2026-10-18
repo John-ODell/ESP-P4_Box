@@ -35,10 +35,15 @@ MOODS = ["sad", "neutral", "happy", "ecstatic", "worried"]
 REACTIONS = ["celebrate", "notice", "sleep"]
 COLOR_KEYS = ["ink", "sleep_ink", "background", "panel", "dim", "accent", "warn", "good"]
 MAX_FRAMES, MAX_ANIMS, MAX_ANIM_FRAMES = 1024, 128, 64
+MAX_JSON = 64 * 1024     # bytes of metadata in a pack, padding included
+MAX_ANIM_NAME = 32
+MAX_NAME_BYTES = 48      # the pet's display name, UTF-8
+SHEET_W = COLS * W       # sheets are exactly 8 frames wide, so frame numbers never shift
+MAX_SHEET_ROWS = MAX_FRAMES // COLS
 REPO = Path(__file__).resolve().parent.parent
 C_DIR = REPO / "projects" / "pet" / "main"
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
-NAME_RE = re.compile(r"^[a-z0-9_]+(/[a-z0-9_]+)?$")
+NAME_RE = re.compile(r"[a-z0-9_]+(/[a-z0-9_]+)?")  # used with fullmatch
 
 
 class PetError(ValueError):
@@ -54,10 +59,16 @@ def png_read(path):
         raise PetError(f"{path}: not a PNG")
     pos, idat, plte, trns, hdr = 8, b"", None, None, None
     while pos < len(data):
+        if pos + 8 > len(data):
+            raise PetError(f"{path}: damaged PNG (cut off inside a chunk header)")
         n, tag = struct.unpack(">I4s", data[pos:pos + 8])
         body = data[pos + 8:pos + 8 + n]
+        if len(body) != n:
+            raise PetError(f"{path}: damaged PNG (cut off inside {tag.decode('latin-1')})")
         pos += 12 + n
         if tag == b"IHDR":
+            if n != 13:
+                raise PetError(f"{path}: damaged PNG (bad IHDR)")
             hdr = struct.unpack(">IIBBBBB", body)
         elif tag == b"PLTE":
             plte = [tuple(body[i:i + 3]) for i in range(0, len(body), 3)]
@@ -75,13 +86,24 @@ def png_read(path):
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(ctype)
     if channels is None or (depth != 8 and not (ctype in (0, 3) and depth in (1, 2, 4))):
         raise PetError(f"{path}: unsupported PNG (colour type {ctype}, {depth}-bit)")
-    raw = zlib.decompress(idat)
+    if w > SHEET_W or h > MAX_SHEET_ROWS * H:
+        raise PetError(f"{path}: {w}x{h} is larger than a sheet can be ({SHEET_W}x{MAX_SHEET_ROWS * H})")
+    try:
+        raw = zlib.decompress(idat)
+    except zlib.error as e:
+        raise PetError(f"{path}: damaged PNG image data ({e})")
     bpp = max(1, channels * depth // 8)
     stride = (w * channels * depth + 7) // 8
+    if len(raw) < h * (1 + stride):
+        raise PetError(f"{path}: damaged PNG (image data too short)")
+    gray_key = trns[0] << 8 | trns[1] if ctype == 0 and trns and len(trns) >= 2 else None
+    rgb_key = struct.unpack(">HHH", trns[:6]) if ctype == 2 and trns and len(trns) >= 6 else None
     rows, prev, i = [], bytearray(stride), 0
     for _ in range(h):
         ftype, line = raw[i], bytearray(raw[i + 1:i + 1 + stride])
         i += 1 + stride
+        if ftype > 4:
+            raise PetError(f"{path}: damaged PNG (unknown row filter {ftype})")
         for x in range(stride):
             a = line[x - bpp] if x >= bpp else 0
             b = prev[x]
@@ -106,9 +128,10 @@ def png_read(path):
         for x in range(w):
             if ctype == 0:
                 v = vals[x] * 255 // ((1 << depth) - 1)
-                row.append((v, v, v, 255))
+                row.append((v, v, v, 0 if vals[x] == gray_key else 255))
             elif ctype == 2:
-                row.append((vals[3 * x], vals[3 * x + 1], vals[3 * x + 2], 255))
+                px = (vals[3 * x], vals[3 * x + 1], vals[3 * x + 2])
+                row.append(px + (0 if px == rgb_key else 255,))
             elif ctype == 3:
                 k = vals[x]
                 if plte is None or k >= len(plte):
@@ -140,16 +163,16 @@ def is_ink(px):
 
 
 def sheet_frames(path):
-    """Frames from a sheet, each a bytes of W*H 0/1, in reading order. Trailing all-empty frames are dropped."""
+    """Frames from a sheet, each a bytes of W*H 0/1, every cell in reading order (frame k is row k // 8, column
+    k % 8). Blank cells are kept so frame numbers match the picture; build() leaves out unused ones at the end."""
     w, h, rows = png_read(path)
-    if w % W or h % H or w == 0 or h == 0:
-        raise PetError(f"{path}: {w}x{h} is not a grid of {W}x{H} frames")
+    if w != SHEET_W or h % H or h == 0:
+        raise PetError(f"{path}: {w}x{h}; a sheet is {SHEET_W} pixels wide ({COLS} frames of {W}x{H}) "
+                       f"and a multiple of {H} high")
     frames = []
     for fy in range(h // H):
         for fx in range(w // W):
             frames.append(bytes(1 if is_ink(rows[fy * H + y][fx * W + x]) else 0 for y in range(H) for x in range(W)))
-    while frames and not any(frames[-1]):
-        frames.pop()
     return frames
 
 
@@ -187,6 +210,11 @@ def load(folder):
     return meta, frames
 
 
+def is_int(v):
+    """A JSON whole number: Python's bool is an int, and 1.0 is not one."""
+    return type(v) is int
+
+
 def frame_list(entries, where, nframes, errors):
     if not isinstance(entries, list) or not entries:
         errors.append(f"{where}: needs at least one frame")
@@ -199,11 +227,11 @@ def frame_list(entries, where, nframes, errors):
             errors.append(f"{at}: must be {{\"frame\": n}} with optional dx, dy, ms")
             continue
         k = f.get("frame")
-        if not isinstance(k, int) or not 0 <= k < nframes:
+        if not is_int(k) or not 0 <= k < nframes:
             errors.append(f"{at}: frame {k!r} is not in the sheet (0 to {nframes - 1})")
         for key, lo, hi in (("dx", -8, 8), ("dy", -8, 8), ("ms", 20, 10000)):
             v = f.get(key, 0 if key != "ms" else 500)
-            if not isinstance(v, int) or not lo <= v <= hi:
+            if not is_int(v) or not lo <= v <= hi:
                 errors.append(f"{at}: {key} must be a whole number from {lo} to {hi}")
 
 
@@ -211,11 +239,12 @@ def check(meta, frames):
     """Every problem with a pet, as readable lines; empty when it can be packed."""
     e = []
     n = len(frames)
-    if meta.get("format") != FORMAT:
+    if not is_int(meta.get("format")) or meta["format"] != FORMAT:
         e.append(f"format must be {FORMAT}")
     name = meta.get("name")
-    if not isinstance(name, str) or not 1 <= len(name) <= 24:
-        e.append("name must be 1 to 24 characters")
+    if (not isinstance(name, str) or not 1 <= len(name) <= 24 or len(name.encode("utf-8")) > MAX_NAME_BYTES
+            or not name.isprintable()):
+        e.append(f"name must be 1 to 24 printable characters, at most {MAX_NAME_BYTES} bytes as UTF-8")
     if n == 0:
         e.append("the sheet has no frames")
     if n > MAX_FRAMES:
@@ -235,9 +264,16 @@ def check(meta, frames):
         anims = {}
     if len(anims) > MAX_ANIMS:
         e.append(f"{len(anims)} animations, at most {MAX_ANIMS}")
+    enums = {}
     for aname, entries in anims.items():
-        if not NAME_RE.match(aname):
-            e.append(f"animation name {aname!r}: lowercase letters, digits, _ and one optional /")
+        if not NAME_RE.fullmatch(aname) or len(aname) > MAX_ANIM_NAME:
+            e.append(f"animation name {aname!r}: up to {MAX_ANIM_NAME} lowercase letters, digits, _ and one optional /")
+        elif aname == "count":
+            e.append("animation name 'count' is reserved")
+        else:
+            other = enums.setdefault(enum_of(aname), aname)
+            if other != aname:
+                e.append(f"animation names {other!r} and {aname!r} are too alike (both become {enum_of(aname)})")
         frame_list(entries, f"animation {aname}", n, e)
     for r in REACTIONS:
         if r not in anims:
@@ -252,7 +288,7 @@ def check(meta, frames):
             e.append(f"moods.{m} is required")
             continue
         rest = md.get("rest")
-        if not isinstance(rest, int) or not 0 <= rest < n:
+        if not is_int(rest) or not 0 <= rest < n:
             e.append(f"moods.{m}.rest: frame {rest!r} is not in the sheet")
         idle = md.get("idle")
         if not isinstance(idle, dict) or not idle:
@@ -261,7 +297,7 @@ def check(meta, frames):
         for aname, wgt in idle.items():
             if aname not in anims:
                 e.append(f"moods.{m}.idle: no animation called {aname!r}")
-            if not isinstance(wgt, int) or not 1 <= wgt <= 255:
+            if not is_int(wgt) or not 1 <= wgt <= 255:
                 e.append(f"moods.{m}.idle.{aname}: weight must be 1 to 255")
     for m in set(moods) - set(MOODS):
         e.append(f"moods.{m} is not a mood ({', '.join(MOODS)})")
@@ -299,38 +335,58 @@ def unpack_bits(data):
     return bytes((data[i // 8] >> (7 - i % 8)) & 1 for i in range(W * H))
 
 
+def used_frames(meta):
+    """Every frame number the metadata refers to."""
+    refs = {f["frame"] for a in meta["animations"].values() for f in a}
+    refs |= {meta["moods"][m]["rest"] for m in MOODS}
+    refs |= {f["frame"] for key in ("snack", "heart") for f in meta["play"][key]}
+    return refs
+
+
 def build(meta, frames):
     """The .petpack bytes for a checked pet."""
     must_check(meta, frames)
+    frames = frames[:max(used_frames(meta)) + 1]  # blank cells after the last one used are not packed
     body = {k: v for k, v in meta.items() if k != "sheet"}
     body.update(frame_w=W, frame_h=H, frame_count=len(frames))
     js = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     js += b"\0" * (-len(js) % 4)
+    if len(js) > MAX_JSON:
+        raise PetError(f"pet.json packs to {len(js)} bytes, at most {MAX_JSON}")
     tail = struct.pack("<I", len(js)) + js + b"".join(pack_bits(f) for f in frames)
     total = 20 + len(tail)
     return MAGIC + struct.pack("<II", FORMAT, total) + struct.pack("<I", zlib.crc32(tail) & 0xFFFFFFFF) + tail
 
 
 def parse(blob):
-    """(meta, frames) back from .petpack bytes; raises PetError on anything the firmware would refuse."""
+    """(meta, frames) back from .petpack bytes, with the checks a loader must make; raises PetError on anything the
+    firmware should refuse."""
     if len(blob) < 24 or blob[:8] != MAGIC:
         raise PetError("not a pet pack (bad magic)")
-    fmt, total, crc = struct.unpack_from("<III", blob, 8)
+    fmt, total, crc, jlen = struct.unpack_from("<IIII", blob, 8)
     if fmt != FORMAT:
         raise PetError(f"pack format {fmt}, this tool reads {FORMAT}")
     if total != len(blob):
         raise PetError(f"pack says {total} bytes, file has {len(blob)}")
     if zlib.crc32(blob[20:]) & 0xFFFFFFFF != crc:
         raise PetError("pack checksum does not match")
-    (jlen,) = struct.unpack_from("<I", blob, 20)
-    meta = json.loads(blob[24:24 + jlen].rstrip(b"\0").decode("utf-8"))
+    if jlen % 4 or jlen > MAX_JSON or 24 + jlen > total:
+        raise PetError(f"pack metadata length {jlen} is out of range")
+    try:
+        meta = json.loads(blob[24:24 + jlen].rstrip(b"\0").decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise PetError(f"pack metadata is not valid JSON ({e})")
+    if not isinstance(meta, dict):
+        raise PetError("pack metadata is not a JSON object")
+    fw, fh, count = meta.pop("frame_w", None), meta.pop("frame_h", None), meta.pop("frame_count", None)
+    if (fw, fh) != (W, H):
+        raise PetError(f"pack frames are {fw}x{fh}, format {FORMAT} is {W}x{H}")
     size = (W * H + 7) // 8
+    if not is_int(count) or not 1 <= count <= MAX_FRAMES or 24 + jlen + count * size != total:
+        raise PetError("pack frame count does not match its length")
     off = 24 + jlen
-    count = meta.pop("frame_count")
-    meta.pop("frame_w"), meta.pop("frame_h")
-    if off + count * size != total:
-        raise PetError("pack frame data has the wrong length")
     frames = [unpack_bits(blob[off + i * size:off + (i + 1) * size]) for i in range(count)]
+    must_check(meta, frames)
     return meta, frames
 
 

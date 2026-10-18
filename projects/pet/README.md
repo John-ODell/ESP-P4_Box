@@ -113,8 +113,14 @@ Console is UART0 at 115200. Layout:
 - `main/face.c`: the scene: sprite in the middle, numbers around the edge, banner, session bubble, stats overlay.
 - `main/anim.c`: sprite player. Idle animations by weight for the current mood class, reactions that preempt them,
   the sleep loop. Frames are LVGL A8 images scaled 12x with antialiasing off, so each art pixel is a crisp 12x12 block.
-- `main/sprites.c` / `sprites.h`: **generated**, do not edit: the built-in pet. Edit `pets/dolphin/` (frames.png and
-  pet.json) and run `python3 tools/petpack.py c pets/dolphin`; `preview pets/dolphin -o sheet.png` shows it first (#66).
+- `main/pet_def.h`: what a pet is to the firmware (`pet_def_t`): frames, animations, idle sets per mood, colours and
+  play looks. `anim.c` and `face.c` draw whichever one `main.c` hands them.
+- `main/pet_pack.c`: at boot, reads a pet pack from the start of the `storage` partition (flash 0x820000), checks
+  it (`notes/pet-packs.md`) and builds a `pet_def_t` in PSRAM; any problem is logged as `pet_pack: using the built-in
+  Dolphin: <why>` and the built-in pet is used. Write a pack with `esptool write_flash 0x820000 pet.petpack` (#67).
+- `main/sprites.c` / `sprites.h`: **generated**, do not edit: the built-in pet, `pet_builtin`. Edit `pets/dolphin/`
+  (frames.png and pet.json) and run `python3 tools/petpack.py c pets/dolphin`; `preview pets/dolphin -o sheet.png`
+  shows it first (#66).
 - `main/sched.c`: SNTP, clock label, backlight idle timer with LEDC fades (full, dim after 30 s, off after 10 min,
   night variants, hold while something waits for a tap). Tunables in `main/pet_config.h` (timezone is a POSIX TZ
   string there).

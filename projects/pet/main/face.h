@@ -3,9 +3,10 @@
 #include "lvgl.h"
 #include "pet_state.h"
 #include "pet_notify.h"
+#include "pet_def.h"
 
 /* The face scene. All functions must be called with the BSP display lock held. */
-void face_create(lv_obj_t *parent);
+void face_create(lv_obj_t *parent, const pet_def_t *pet);
 void face_apply_state(const pet_state_t *s, bool celebrate);
 void face_set_link(const char *text);     /* bottom-right: wifi / mqtt status */
 void face_set_status(const char *text);   /* bottom centre, small: debug feedback */

@@ -14,6 +14,7 @@
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include "face.h"
+#include "pet_pack.h"
 #include "net.h"
 #include "mqtt_link.h"
 #include "settings.h"
@@ -314,6 +315,8 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    const pet_def_t *pet = pet_pack_load();   /* before the display, so a slow flash read shows no blank face */
+
     ESP_LOGI(TAG, "starting display");
     ESP_LOGI(TAG, "boot: reset reason %s", reset_reason_name());
     ota_report_boot();
@@ -326,7 +329,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(bsp_display_lock(0) ? ESP_OK : ESP_ERR_TIMEOUT);
     lv_obj_t *scr = lv_screen_active();
-    face_create(scr);
+    face_create(scr, pet);
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr, touch_event_cb, LV_EVENT_ALL, NULL);
     sched_start();

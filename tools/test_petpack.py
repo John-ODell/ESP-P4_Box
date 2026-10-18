@@ -212,6 +212,11 @@ class Errors(unittest.TestCase):
         self.assertIn("ms must be", e)
         self.assertIn("dx must be", e)
 
+    def test_colour_with_a_trailing_newline(self):
+        # re's $ also matches before a final newline; the box refuses "#E6F0F5\n", so check must too
+        self.assertIn("colors.ink", self.errors(lambda m: m["colors"].update(ink="#E6F0F5\n")))
+        self.assertIn("play.pads", self.errors(lambda m: m["play"].update(pads=["#4FD1C5\n"] * 4)))
+
     def test_pads_need_four_colours(self):
         self.assertIn("play.pads", self.errors(lambda m: m["play"].update(pads=["#000000"])))
 
@@ -236,12 +241,10 @@ class Errors(unittest.TestCase):
             return lambda m: m["animations"].update({name: [{"frame": 0}]})
         self.assertIn("animation name", self.errors(add("celebrate\n")))
         self.assertIn("animation name", self.errors(add("a" * 33)))
-        self.assertIn("reserved", self.errors(add("count")))
-        self.assertIn("too alike", self.errors(add("happy_wiggle")))
         self.assertEqual(self.errors(add("a" * 32)), "")
 
     def test_pet_name(self):
-        for bad in ("Dol\nphin", "x" * 25, "\u00e9" * 25, "\U0001F42C" * 13, "\t"):
+        for bad in ("Dol\ud800", "Dol\nphin", "x" * 25, "\u00e9" * 25, "\U0001F42C" * 13, "\t"):
             with self.subTest(repr(bad)):
                 self.assertIn("name must be", self.errors(lambda m: m.update(name=bad)))
         self.assertEqual(self.errors(lambda m: m.update(name="Flipper the 2nd")), "")

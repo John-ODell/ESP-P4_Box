@@ -30,10 +30,26 @@ pixel in the most significant bit of each byte. A 1 bit is ink. Frame numbers in
 out only the blank or unused cells after the highest frame the metadata uses.
 
 **Limits** (format 1): at most 1024 frames, 128 animations, 64 frames per animation; animation names up to 32
-characters (`[a-z0-9_]+` with one optional `/`, not `count`, and no two that differ only in `/` versus `_`); a pet name
+characters (`[a-z0-9_]+` with one optional `/`); a pet name
 of 1 to 24 printable characters and at most 48 bytes of UTF-8; `dx`/`dy` -8 to 8; `ms` 20 to 10000; idle weights 1 to
 255; `json_len` at most 65536. So a pack is at most 24 + 65536 + 1024 x 240 = 311320 bytes (about 304 KB), which fits
-easily in the 7 MB `storage` partition, where the loader expects it at offset 0.
+easily in the 7 MB `storage` partition, where the loader expects it at offset 0 (flash address 0x820000 with the
+current `partitions.csv`). Write one with `esptool write_flash 0x820000 pet.petpack`; erase the first 4 KB there to go
+back to the built-in pet.
+
+**The firmware loader** (`projects/pet/main/pet_pack.c`) makes the same checks as `parse()`, and before parsing it
+refuses metadata nested more than 8 deep (format 1 needs 4; deeper JSON would overflow cJSON's recursion on the 10 KB
+main task), any `\u0000` or raw control byte inside a string (cJSON copies raw bytes, so a NUL would cut a string
+short), and anything outside strings that is not ASCII or is a control byte other than space, tab, CR and LF (a
+UTF-8 BOM, for one). After parsing it refuses duplicate keys, objects with more than 128 fields, and text
+after the JSON object. Where it is looser than `parse()`:
+
+- cJSON cannot tell `1` from `1.0`, and it reads a leading zero (`01`) as a number, so the box accepts both.
+- It ignores JSON fields it does not know.
+- The name check is well-formed UTF-8 without control characters; `parse()` uses Python's `isprintable()`, which
+  also refuses characters such as a no-break space or U+2028.
+
+Packs from `petpack.py build` never contain any of these. `parse()` still takes the last of two equal keys (#70).
 
 **Compatibility.** A change that older firmware could misread gets a new `format` number. Unknown JSON fields are an
 error in `check`, so a newer field cannot slip into an older pack unnoticed.

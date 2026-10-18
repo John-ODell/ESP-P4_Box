@@ -1,8 +1,8 @@
 /* The play menu (#62): a long press opens it over the pet. Feed closes the menu and drops a snack (#63), or says why
- * there is none; Pet Says starts the memory game (#65); 20 Questions starts the guessing game (#78); Settings opens a stub page until #53. Close, a tap outside the
- * panel, or PET_MENU_IDLE_MS without a touch closes it. Its objects catch their own taps, which do not bubble to the
- * screen, so menu taps never acknowledge a waiting AI session; MQTT state and notices keep updating the face
- * underneath. */
+ * there is none; Pet Says starts the memory game (#65); 20 Questions starts the guessing game (#78); Settings opens a
+ * stub page until #53. Close, a tap outside the panel, or PET_MENU_IDLE_MS without a touch closes it. Its objects
+ * catch their own taps, which do not bubble to the screen, so menu taps never acknowledge a waiting AI session; MQTT
+ * state and notices keep updating the face underneath. */
 #include "menu.h"
 #include "face.h"
 #include "play.h"

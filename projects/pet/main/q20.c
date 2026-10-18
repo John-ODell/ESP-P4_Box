@@ -123,7 +123,7 @@ static void start_game(void)
     s_game = (esp_random() & 0x7fffffff) | 1;   /* positive and never 0, so it reads the same as JSON on both sides */
     s_n = 0;
     lv_label_set_text(s_turn, "20 Questions");
-    if (!send("start", NULL)) {
+    if (!mqtt_link_connected() || !send("start", NULL)) {   /* publish alone queues while the link is down */
         show_error("Not connected to the bridge, so there is no one to ask the questions.");
         return;
     }
@@ -150,7 +150,7 @@ static void close_game(const char *why)
 
 static void answer(const char *a)
 {
-    if (!send("answer", a)) {
+    if (!mqtt_link_connected() || !send("answer", a)) {
         show_error("Lost the connection to the bridge.");
         return;
     }
@@ -235,12 +235,12 @@ void q20_on_msg(const char *payload, size_t len)
     const cJSON *q = cJSON_GetObjectItem(j, "q"), *guess = cJSON_GetObjectItem(j, "guess");
     const cJSON *err = cJSON_GetObjectItem(j, "error");
     char buf[TEXT_MAX];
-    if (!cJSON_IsNumber(game) || (uint32_t)game->valuedouble != s_game) {
+    if (!cJSON_IsNumber(game) || game->valuedouble != (double)s_game) {
         ;   /* another game's reply */
     } else if (cJSON_IsString(err)) {
         show_error(err->valuestring);
     } else if (cJSON_IsNumber(n) && n->valueint == s_n + 1 && n->valueint <= TURNS &&
-               (cJSON_IsString(q) || cJSON_IsString(guess))) {
+               (cJSON_IsString(guess) || (cJSON_IsString(q) && n->valueint < TURNS))) {   /* turn 20 is a guess */
         s_n = n->valueint;
         if (cJSON_IsString(guess)) {
             s_state = ST_GUESS;

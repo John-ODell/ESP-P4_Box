@@ -73,7 +73,7 @@ static void apply_ink(void)
 /* The backlight stays at full while anything on screen waits for a tap. */
 static void apply_hold(void)
 {
-    sched_hold(s_banner_sticky || s_notice_on);
+    sched_hold(SCHED_HOLD_FACE, s_banner_sticky || s_notice_on);
 }
 
 static void banner_timeout(lv_timer_t *t)

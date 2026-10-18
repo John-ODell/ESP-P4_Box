@@ -14,6 +14,7 @@
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include "face.h"
+#include "menu.h"
 #include "pet_pack.h"
 #include "net.h"
 #include "mqtt_link.h"
@@ -145,8 +146,8 @@ static void touch_event_cb(lv_event_t *e)
     case LV_EVENT_LONG_PRESSED:
         s_swallow_click = true;
         sched_touch();
-        ESP_LOGI(TAG, "long press  x=%d y=%d (settings come later)", (int)p.x, (int)p.y);
-        face_set_status("long press: settings come in a later milestone");
+        ESP_LOGI(TAG, "long press  x=%d y=%d -> menu", (int)p.x, (int)p.y);
+        menu_open();
         break;
     case LV_EVENT_GESTURE: {
         s_swallow_click = true;
@@ -330,6 +331,7 @@ void app_main(void)
     ESP_ERROR_CHECK(bsp_display_lock(0) ? ESP_OK : ESP_ERR_TIMEOUT);
     lv_obj_t *scr = lv_screen_active();
     face_create(scr, pet);
+    menu_create(scr, pet);
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr, touch_event_cb, LV_EVENT_ALL, NULL);
     sched_start();

@@ -17,6 +17,7 @@
 #include "face.h"
 #include "menu.h"
 #include "pet_pack.h"
+#include "play.h"
 #include "net.h"
 #include "mqtt_link.h"
 #include "settings.h"
@@ -310,6 +311,7 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
                  st.big_day ? " BIG" : "", (unsigned long)st.events, retained ? " (retained)" : "");
         if (bsp_display_lock(500)) {
             /* A retained message is a replay of old state: render it, but do not re-celebrate. */
+            play_set_today(st.today.total);   /* snacks come from today's contributions */
             face_apply_state(&st, !retained);
             if (changed && !retained) {
                 sched_activity("pet state changed"); /* wake the screen: something happened */
@@ -336,6 +338,7 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    play_init();   /* happiness and today's eaten snacks, from NVS */
 
     const pet_def_t *pet = pet_pack_load();   /* before the display, so a slow flash read shows no blank face */
 

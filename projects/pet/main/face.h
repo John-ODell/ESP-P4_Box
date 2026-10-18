@@ -13,6 +13,7 @@ void face_set_status(const char *text);   /* bottom centre, small: debug feedbac
 void face_set_clock(const char *hhmm);
 void face_set_sleeping(bool sleeping);
 void face_toggle_stats(void);             /* swipe: peek at the numbers */
+bool face_feed(void);                     /* Feed: drop a snack on the pet; false when none is left */
 void face_ack(void);                      /* tap: dismiss banner, stats, and a waiting reaction */
 void face_set_notice(const pet_notice_t *n, int pos, int count, int held, bool announce); /* an AI session waits:
                                                       bubble (with "pos+1 of count waiting" when count > 1, plus "Tap

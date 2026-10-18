@@ -4,6 +4,7 @@
 #include <string.h>
 #include "face.h"
 #include "anim.h"
+#include "play.h"
 #include "pet_config.h"
 #include "sched.h"
 #include "esp_log.h"
@@ -21,7 +22,10 @@ static const pet_def_t *s_pet;
 
 static const char *TAG = "face";
 static lv_obj_t *s_level, *s_xp_bar, *s_xp_text, *s_streak, *s_clock, *s_today, *s_mood, *s_link, *s_status, *s_banner;
-static lv_obj_t *s_stats, *s_stats_body, *s_stats_bar;
+static lv_obj_t *s_stats, *s_stats_body, *s_stats_bar, *s_play_body;
+static lv_obj_t *s_snack;          /* the falling fish while the pet is fed */
+static lv_timer_t *s_snack_timer;  /* steps through the pet's snack frames during the fall */
+static int s_snack_frame;
 static lv_timer_t *s_banner_timer, *s_stats_timer;
 static pet_state_t s_last;
 static lv_obj_t *s_bubble, *s_bubble_who, *s_bubble_what, *s_bubble_title, *s_bubble_count;
@@ -117,6 +121,56 @@ static void banner(const char *text, lv_color_t color, bool sticky)
     }
 }
 
+/* The stats overlay's play section: happiness and snacks, kept apart from the GitHub numbers above it. */
+static void fill_play(void)
+{
+    int snacks = play_snacks();
+    if (snacks < 0) {
+        lv_label_set_text_fmt(s_play_body, "happiness  %d / 100\nsnacks  waiting for today's numbers",
+                              play_happiness());
+    } else {
+        lv_label_set_text_fmt(s_play_body, "happiness  %d / 100\nsnacks  %d left   %d eaten today", play_happiness(),
+                              snacks, play_eaten());
+    }
+}
+
+static void play_timer(lv_timer_t *t)
+{
+    (void)t;
+    play_tick(s_sleeping);
+    fill_play();
+}
+
+static void snack_y(void *obj, int32_t y)
+{
+    lv_obj_set_y(obj, y);
+}
+
+static void snack_step(lv_timer_t *t)
+{
+    const pet_anim_t *a = &s_pet->snack;
+    s_snack_frame = (s_snack_frame + 1) % a->count;
+    lv_image_set_src(s_snack, s_pet->images[a->frames[s_snack_frame].img]);
+    lv_timer_set_period(t, a->frames[s_snack_frame].ms);
+}
+
+static void snack_landed(lv_anim_t *a)
+{
+    (void)a;
+    lv_timer_delete(s_snack_timer);
+    s_snack_timer = NULL;
+    show(s_snack, false);
+    int left = play_snacks();
+    ESP_LOGI(TAG, "snack eaten, %d left, happiness %d", left, play_happiness());
+    if (!s_banner_sticky) { /* a waiting level-up keeps its celebration loop and banner */
+        anim_play(PET_REACT_CELEBRATE, false);
+        char text[40];
+        snprintf(text, sizeof(text), "Yum!  %d snack%s left", left, left == 1 ? "" : "s");
+        banner(text, GOOD_COLOR, false);
+    }
+    fill_play();
+}
+
 void face_create(lv_obj_t *parent, const pet_def_t *pet)
 {
     s_pet = pet;
@@ -125,6 +179,17 @@ void face_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_obj_remove_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
 
     anim_init(parent, pet, PET_SPRITE_X, PET_SPRITE_Y, PET_SPRITE_SCALE);
+
+    /* The snack, over the pet and under every overlay, hidden until Feed. */
+    s_snack = lv_image_create(parent);
+    lv_image_set_pivot(s_snack, 0, 0);
+    lv_image_set_scale(s_snack, 256 * PET_SNACK_SCALE);
+    lv_image_set_antialias(s_snack, false);
+    lv_obj_set_style_image_recolor_opa(s_snack, LV_OPA_COVER, 0);
+    lv_obj_set_style_image_recolor(s_snack, INK_COLOR, 0);
+    lv_obj_remove_flag(s_snack, LV_OBJ_FLAG_CLICKABLE);
+    show(s_snack, false);
+    lv_timer_create(play_timer, 60000, NULL);
 
     s_level = label(parent, &lv_font_montserrat_48, ACCENT_COLOR, LV_ALIGN_TOP_LEFT, 24, 16);
     lv_label_set_text(s_level, "LV -");
@@ -171,7 +236,7 @@ void face_create(lv_obj_t *parent, const pet_def_t *pet)
     /* Stats overlay, hidden until a swipe. */
     s_stats = lv_obj_create(parent);
     lv_obj_remove_style_all(s_stats);
-    lv_obj_set_size(s_stats, 620, 460);
+    lv_obj_set_size(s_stats, 620, 560);
     lv_obj_center(s_stats);
     lv_obj_set_style_bg_color(s_stats, PANEL_COLOR, 0);
     lv_obj_set_style_bg_opa(s_stats, LV_OPA_COVER, 0);
@@ -187,6 +252,11 @@ void face_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_label_set_long_mode(s_stats_body, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_line_space(s_stats_body, 10, 0);
     lv_label_set_text(s_stats_body, "no state from the bridge yet");
+    lv_obj_t *play_title = label(s_stats, &lv_font_montserrat_24, ACCENT_COLOR, LV_ALIGN_TOP_LEFT, 0, 270);
+    lv_label_set_text(play_title, "play");   /* the pet's own numbers, not from GitHub */
+    s_play_body = label(s_stats, &lv_font_montserrat_24, INK_COLOR, LV_ALIGN_TOP_LEFT, 0, 312);
+    lv_obj_set_style_text_line_space(s_play_body, 10, 0);
+    fill_play();
     s_stats_bar = bar(s_stats, 560);
     lv_obj_align(s_stats_bar, LV_ALIGN_BOTTOM_LEFT, 0, -36);
     lv_obj_t *foot = label(s_stats, &lv_font_montserrat_16, DIM_COLOR, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
@@ -209,6 +279,7 @@ static void fill_stats(const pet_state_t *s)
                           s->level, s->xp_into, s->xp_next, s->xp, s->mood_label, s->mood);
     int pct = s->xp_next > 0 ? (s->xp_into * 100) / s->xp_next : 0;
     lv_bar_set_value(s_stats_bar, pct > 100 ? 100 : pct, LV_ANIM_OFF);
+    fill_play();   /* today's total sets the snacks */
 }
 
 static int mood_class(const pet_state_t *s)
@@ -402,4 +473,31 @@ void face_clear_notice(void)
     show(s_bubble, false);
     apply_ink();
     apply_hold();
+}
+
+bool face_feed(void)
+{
+    if (s_snack_timer || !play_feed()) {   /* one fish at a time; none when no snack is left */
+        return false;
+    }
+    const pet_anim_t *sn = &s_pet->snack;
+    const int w = PET_SPRITE_W * PET_SNACK_SCALE, h = PET_SPRITE_H * PET_SNACK_SCALE;
+    s_snack_frame = 0;
+    lv_image_set_src(s_snack, s_pet->images[sn->frames[0].img]);
+    lv_obj_set_pos(s_snack, PET_SPRITE_X + PET_SPRITE_W * PET_SPRITE_SCALE / 2 - w / 2, -h);
+    show(s_snack, true);
+    s_snack_timer = lv_timer_create(snack_step, sn->frames[0].ms, NULL);
+
+    lv_anim_t a;   /* drop from above the screen to the pet's head, speeding up as it falls */
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_snack);
+    lv_anim_set_exec_cb(&a, snack_y);
+    lv_anim_set_values(&a, -h, PET_SPRITE_Y + PET_SPRITE_H * PET_SPRITE_SCALE / 3 - h / 2);
+    lv_anim_set_duration(&a, 900);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_completed_cb(&a, snack_landed);
+    lv_anim_start(&a);
+    sched_activity("fed");
+    fill_play();
+    return true;
 }

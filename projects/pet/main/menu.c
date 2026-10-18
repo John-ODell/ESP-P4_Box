@@ -1,8 +1,10 @@
-/* The play menu (#62): a long press opens it over the pet. Feed, Pet Says and Settings open their pages (stubs until
- * #63, #65 and #53); Close, a tap outside the panel, or PET_MENU_IDLE_MS without a touch closes it. Its objects catch
+/* The play menu (#62): a long press opens it over the pet. Feed closes the menu and drops a snack (#63), or says why
+ * there is none; Pet Says and Settings open their pages (stubs until #65 and #53); Close, a tap outside the panel, or PET_MENU_IDLE_MS without a touch closes it. Its objects catch
  * their own taps, which do not bubble to the screen, so menu taps never acknowledge a waiting AI session; MQTT state
  * and notices keep updating the face underneath. */
 #include "menu.h"
+#include "face.h"
+#include "play.h"
 #include "pet_config.h"
 #include "sched.h"
 #include "esp_log.h"
@@ -16,7 +18,7 @@ static const char *TAG = "menu";
 enum { ITEM_FEED, ITEM_SAYS, ITEM_SETTINGS, ITEM_CLOSE, ITEMS };
 static const char *const ITEM_LABEL[ITEMS] = {"Feed", "Pet Says", "Settings", "Close"};
 static const char *const PAGE_TEXT[ITEM_CLOSE] = {
-    "Snacks are coming soon: your pet will earn one for every contribution today.",
+    "No snacks left today. Go make a commit!",   /* replaced while the bridge has not sent today's total */
     "The memory game is coming soon.",
     "Coming with Wi-Fi setup.",
 };
@@ -49,7 +51,8 @@ static void scrim_cb(lv_event_t *e)
 static void show_page(int item)
 {
     lv_label_set_text(s_page_title, ITEM_LABEL[item]);
-    lv_label_set_text(s_page_text, PAGE_TEXT[item]);
+    lv_label_set_text(s_page_text, item == ITEM_FEED && play_snacks() < 0 ? "Waiting for today's numbers from the bridge."
+                                                                          : PAGE_TEXT[item]);
     lv_obj_add_flag(s_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_page, LV_OBJ_FLAG_HIDDEN);
 }
@@ -60,6 +63,9 @@ static void item_cb(lv_event_t *e)
     ESP_LOGI(TAG, "%s", ITEM_LABEL[item]);
     if (item == ITEM_CLOSE) {
         menu_close("Close");
+    } else if (item == ITEM_FEED && play_snacks() > 0) {
+        menu_close("feed");   /* the pet eats in full view */
+        face_feed();
     } else {
         show_page(item);
     }

@@ -17,6 +17,7 @@
 #include "face.h"
 #include "mqtt_link.h"
 #include "pet_pack.h"
+#include "ota.h"
 #include "pack_cmd.h"
 
 #define PACK_URL_MAX     200
@@ -143,7 +144,7 @@ static esp_err_t write_storage(const uint8_t *buf, int len, char *why, size_t wh
         err = esp_partition_write(part, 0, buf, len);
     }
     if (err != ESP_OK) {
-        snprintf(why, why_len, "write: %s (storage now holds no pack: the built-in pet shows after a reboot)",
+        snprintf(why, why_len, "write: %s (the pack in storage may be damaged: a reboot could show the built-in pet)",
                  esp_err_to_name(err));
         return err;
     }
@@ -222,6 +223,18 @@ static bool parse_sha(const char *hex, uint8_t out[32])
     return true;
 }
 
+/* A command the box will not start: said on pet/pack too, so pack_push.py stops waiting. Not "failed" on screen. */
+static void refuse(const char *why)
+{
+    ESP_LOGW(TAG, "cmd ignored: %s", why);
+    report("failed", NULL, -1, why, 0);
+}
+
+bool pack_busy(void)
+{
+    return s_busy;
+}
+
 bool pack_handle_cmd(const char *payload, size_t len)
 {
     cJSON *root = cJSON_ParseWithLength(payload, len);
@@ -236,11 +249,13 @@ bool pack_handle_cmd(const char *payload, size_t len)
     if (!job) {
         fail("no memory for the pack job");
     } else if (strncmp(url, "http://", 7) != 0 || strlen(url) > PACK_URL_MAX) {
-        ESP_LOGW(TAG, "cmd ignored: the url must be plain http on the LAN and short: %.80s", url);
+        refuse("the url must be plain http on the LAN and at most 200 characters");
     } else if (!parse_sha(cJSON_IsString(h) ? h->valuestring : NULL, job->sha)) {
-        ESP_LOGW(TAG, "cmd ignored: sha256 must be 64 hex digits");
+        refuse("sha256 must be 64 hex digits");
     } else if (s_busy) {
-        ESP_LOGW(TAG, "cmd ignored: a pack is already on its way");
+        refuse("a pack is already on its way");
+    } else if (ota_busy()) {
+        refuse("a firmware update is running; send the pack after it");   /* whichever reboots first ends the other */
     } else {
         strlcpy(job->url, url, sizeof job->url);
         s_busy = true;
@@ -259,5 +274,5 @@ bool pack_handle_cmd(const char *payload, size_t len)
 void pack_report_running(const char *pet_name)
 {
     uint32_t crc = pet_pack_loaded_crc();
-    report("running", pet_name, -1, crc ? NULL : pet_pack_why(), crc);
+    report("running", pet_name, -1, crc ? NULL : pet_pack_boot_why(), crc);
 }

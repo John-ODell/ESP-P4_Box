@@ -14,3 +14,4 @@ const pet_def_t *pet_pack_load(void);
 bool pet_pack_check(const uint8_t *buf, size_t len, char *name, size_t name_len, uint32_t *crc);
 const char *pet_pack_why(void);
 uint32_t pet_pack_loaded_crc(void);   /* the CRC of the pack in use, 0 when the built-in pet is drawn */
+const char *pet_pack_boot_why(void);  /* why the built-in pet is drawn ("" when a pack is) */

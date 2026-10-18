@@ -102,7 +102,7 @@ def main() -> int:
 
     done = threading.Event()
     answered = threading.Event()  # the broker took the connection or refused it
-    seen = {"sent": False, "rebooting": False, "ok": False, "refused": False}
+    seen = {"sent": False, "rebooting": False, "ok": False, "refused": False, "before": None}
 
     def on_message(client, userdata, msg):
         try:
@@ -110,7 +110,8 @@ def main() -> int:
         except ValueError:
             print(f"{TOPIC_PACK}: unreadable: {msg.payload[:80]!r}")
             return
-        if msg.retain and not seen["sent"]:  # what the broker remembered from before this push
+        if msg.retain:  # what the broker remembered from before this push; live reports to a subscriber are not retained
+            seen["before"] = st.get("crc")
             print(f"box before the push: {st}")
             return
         print("box: " + ", ".join(f"{k} {v}" for k, v in st.items()), flush=True)
@@ -119,8 +120,9 @@ def main() -> int:
             seen["rebooting"] = True
         elif state == "failed":
             done.set()
-        elif state == "running" and seen["rebooting"]:
-            # The box repeats its running report on every reconnect, so only one after this push's reboot counts.
+        elif state == "running" and (seen["rebooting"] or (st.get("crc") == crc and seen["before"] != crc)):
+            # The box repeats its running report on every reconnect, so only one after this push's reboot counts,
+            # or one already drawing the new pack when it was not before (the rebooting report can be missed).
             seen["ok"] = st.get("crc") == crc
             if not seen["ok"]:
                 print(f"the box came back drawing {st.get('pet')} (crc {st.get('crc')}), not {name} ({crc})")
@@ -150,7 +152,7 @@ def main() -> int:
             return 1
         if seen["refused"]:
             return 1
-        time.sleep(1)  # let the retained pet/pack in first, so it is not mistaken for a reply
+        time.sleep(1)  # let the retained pet/pack in first, so the pet before the push is known
         client.publish(TOPIC_CMD, json.dumps({"pack": url, "sha256": sha}), qos=1, retain=False).wait_for_publish(5)
         seen["sent"] = True
         print(f"told the box on {TOPIC_CMD}; waiting up to {a.timeout:.0f} s", flush=True)

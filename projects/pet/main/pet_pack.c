@@ -38,6 +38,7 @@ static const char *const REACTION_KEYS[PET_REACTIONS] = {"celebrate", "notice", 
 
 static char s_why[112];   /* the first problem found, for the log */
 static uint32_t s_loaded_crc;   /* CRC of the pack the box is drawing, 0 for the built-in pet */
+static char s_boot_why[sizeof s_why];   /* why the built-in pet is drawn; s_why is reused by pet_pack_check() */
 
 static bool bad(const char *fmt, ...)
 {
@@ -633,6 +634,7 @@ const pet_def_t *pet_pack_load(void)
         return def;
     }
     ESP_LOGW(TAG, "using the built-in %s: %s", pet_builtin.name, s_why);
+    strlcpy(s_boot_why, s_why, sizeof s_boot_why);
     return &pet_builtin;
 }
 
@@ -662,6 +664,11 @@ bool pet_pack_check(const uint8_t *buf, size_t len, char *name, size_t name_len,
 const char *pet_pack_why(void)
 {
     return s_why;
+}
+
+const char *pet_pack_boot_why(void)
+{
+    return s_boot_why;
 }
 
 uint32_t pet_pack_loaded_crc(void)

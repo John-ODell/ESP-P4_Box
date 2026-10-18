@@ -8,3 +8,4 @@
  * alone. Progress and the outcome go to the UART, the face's status line, and the retained pet/pack message. */
 bool pack_handle_cmd(const char *payload, size_t len);   /* a pet/cmd payload; false when it is not a pack command */
 void pack_report_running(const char *pet_name);         /* MQTT is up: say on pet/pack which pet the box draws */
+bool pack_busy(void);                                   /* a pack is downloading or being written */

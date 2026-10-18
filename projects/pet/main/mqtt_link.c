@@ -1,5 +1,5 @@
-/* Thin wrapper over esp-mqtt: connect to the bridge's broker, subscribe to pet/state, pet/event, pet/notify and
- * pet/cmd, publish pet/ack, pet/ota and pet/pack. */
+/* Thin wrapper over esp-mqtt: connect to the bridge's broker, subscribe to pet/state, pet/event, pet/notify, pet/cmd
+ * and pet/q20/ask, publish pet/ack, pet/ota, pet/pack and pet/q20. */
 #include <stdlib.h>
 #include <string.h>
 #include "mqtt_link.h"
@@ -24,6 +24,7 @@ static void handler(void *arg, esp_event_base_t base, int32_t id, void *data)
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_EVENT, 1);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_NOTIFY, 1);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_CMD, 1);
+        esp_mqtt_client_subscribe(s_client, PET_TOPIC_Q20_ASK, 1);
         if (s_on_status) {
             s_on_status(true);
         }

@@ -46,6 +46,9 @@
 #define PET_SAYS_HAPPY_PER   4
 #define PET_SAYS_HAPPY_MAX   6       /* ... up to this, one less for each recent game (a minute forgets one) */
 #define PET_HEART_SCALE      6       /* the hearts that float up from a stroke */
+#define PET_Q20_IDLE_MS      90000   /* 20 Questions closes after this long without a touch (reading takes a while) */
+#define PET_Q20_REPLY_MS     50000   /* ... and gives up on the bridge after this; the bridge's own limit is 40 s */
+#define PET_Q20_HAPPY        3       /* happiness for a finished game, won or lost */
 
 /* Session notifications (milestone 6): while an AI session waits for a person, the character takes that source's
  * colour and a bubble names the session. Sources are what the senders in bridge/hooks/ and bridge/notify.py put in

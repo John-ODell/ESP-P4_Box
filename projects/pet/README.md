@@ -11,12 +11,12 @@ SDIO) and an MQTT subscription to the bridge's `pet/state`. Milestone 6 (box sid
 the source tint and the waiting counter described below; that part is built and not yet verified on the board.
 
 Interactions, all passive otherwise: **tap** acknowledges (the waiting session shown in the bubble, banner, stats, a
-waiting level-up), **tap on the bubble** shows the next waiting session, **stroke the pet** (drag a finger over it)
-for hearts, a happy wiggle and a little happiness (#64), **swipe** any direction starting off the pet peeks at the
-stats for 12 s (a swipe within 0.8 s of the last one is ignored, so a flick back does not undo it), **long press** off
-the pet opens the play menu (Feed, Pet Says, Settings, Close; #62). The pet's own area (the box its ink covers in its
-resting frames, logged at boot as `face: pet area`) is for touching the pet: a drag there is petting however fast, and
-a long press there does nothing (it does not acknowledge either); a tap there still acknowledges. The menu closes on
+waiting level-up), **tap on the bubble** shows the next waiting session, **stroke the pet** (drag a finger over it) for
+hearts, a happy wiggle and a little happiness (#64), **swipe** any direction starting off the pet peeks at the stats for
+12 s (a swipe within 0.8 s of the last one is ignored, so a flick back does not undo it), **long press** off the pet
+opens the play menu (Feed, Pet Says, 20 Questions, Settings, Close; #62). The pet's own area (the box its ink covers in
+its resting frames, logged at boot as `face: pet area`) is for touching the pet: a drag there is petting however fast,
+and a long press there does nothing (it does not acknowledge either); a tap there still acknowledges. The menu closes on
 Close, a tap outside it, or 7 s without a touch, keeps the screen bright while open, and its taps never acknowledge a
 waiting session.
 
@@ -39,6 +39,17 @@ that scored adds 2 happiness plus 1 per 4 rounds, up to 6, less 1 for each recen
 corner, or 30 s without a tap while it waits for one (`PET_SAYS_IDLE_MS`), leaves without a score, and the result card
 also closes after 30 s. The game takes every touch, so it never acknowledges an AI session, and keeps the screen
 bright while open.
+
+**20 Questions** (#78, `main/q20.c`) is a guessing game from the menu. Think of something, and the pet, drawn at 4x
+above the question, asks yes-or-no questions; tap **Yes**, **No** or **Not sure**. A guess shows as "Is it ...?" with
+**Right!** and **Wrong**. A question or a guess each uses one of 20 turns, and turn 20 is always a guess. Right ends the
+game with the celebration and "I got it in N!", Wrong on turn 20 with a mope and "You stumped me!", and a wrong guess
+before that goes on to the next turn. A finished game adds 3 happiness (`PET_Q20_HAPPY`). The questions come from a
+model on the bridge (`bridge/petbrain/q20.py`, #82): the box sends `start`, each tap and `quit` on `pet/q20` and shows
+what comes back on `pet/q20/ask`, so it never holds an API key. A turn takes about 5 to 10 s, while the pet looks
+around. Close (X), 90 s without a touch (`PET_Q20_IDLE_MS`) or 50 s without a reply from the bridge (`PET_Q20_REPLY_MS`,
+which then says so) ends the game; with no MQTT link it says so at once. Like Pet Says it takes every touch and keeps
+the screen bright.
 
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a
@@ -151,8 +162,10 @@ Console is UART0 at 115200. Layout:
 - `main/main.c`: boot, BSP start, touch handling, wiring between network, MQTT, schedule, and the face.
 - `main/face.c`: the scene: sprite in the middle, numbers around the edge, banner, session bubble, stats overlay.
 - `main/menu.c`: the play menu over the pet. Feed drops a snack (`face_feed()`), Pet Says starts the game
-  (`says_open()`), Settings opens a stub page until the on-box Wi-Fi setup (#53).
+  (`says_open()`), 20 Questions starts the other one (`q20_open()`), Settings opens a stub page until the on-box Wi-Fi
+  setup (#53).
 - `main/says.c`: Pet Says, the memory game, over the face with the pet drawn small in the middle.
+- `main/q20.c`: 20 Questions over the face: shows the bridge's turns from `pet/q20/ask`, sends the taps on `pet/q20`.
 - `main/play.c`: happiness and snacks, saved in NVS. Each stroke adds `PET_HAPPY_PET` (3), one less for every
   `PET_PET_FADE` (4) recent strokes, down to nothing; each minute forgets two recent strokes (at most 12 are kept),
   so the gain is back to full after 6 minutes' rest. Pet Says adds happiness with `play_says_done()`.

@@ -188,19 +188,26 @@ static bool anim_name_ok(const char *s)
 
 /* Before cJSON sees the text. cJSON recurses once per [ or { at about 96 bytes of stack a level, so a pack nested a
  * few hundred deep (a few hundred bytes, any CRC) would overflow the 10 KB main task and the box would reboot on the
- * same pack forever. Also refuses \u0000, which would cut a C string short. */
+ * same pack forever. Also refuses what would make cJSON and Python disagree: \u0000 or a raw control byte inside a
+ * string (cJSON copies raw bytes, so a NUL cuts the C string short), and anything outside strings that is not ASCII
+ * or is a control byte other than JSON whitespace (a BOM, a vertical tab). */
 static bool json_shape_ok(const char *s, size_t n)
 {
     int depth = 0;
     bool in_string = false;
     for (size_t i = 0; i < n; i++) {
-        char c = s[i];
+        unsigned char c = s[i];
+        if (in_string ? c < 0x20 : (c >= 0x80 || (c < 0x20 && c != ' ' && c != '\t' && c != '\r' && c != '\n'))) {
+            return bad("pack metadata has byte 0x%02x %s a string", c, in_string ? "inside" : "outside");
+        }
         if (in_string) {
             if (c == '\\') {
                 if (i + 5 < n && s[i + 1] == 'u' && memcmp(s + i + 2, "0000", 4) == 0) {
                     return bad("pack metadata contains \\u0000");
                 }
-                i++;
+                if (++i < n && (unsigned char)s[i] < 0x20) {
+                    return bad("pack metadata has byte 0x%02x inside a string", (unsigned char)s[i]);
+                }
             } else if (c == '"') {
                 in_string = false;
             }

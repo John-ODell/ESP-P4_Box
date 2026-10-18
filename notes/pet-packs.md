@@ -39,7 +39,9 @@ back to the built-in pet.
 
 **The firmware loader** (`projects/pet/main/pet_pack.c`) makes the same checks as `parse()`, and before parsing it
 refuses metadata nested more than 8 deep (format 1 needs 4; deeper JSON would overflow cJSON's recursion on the 10 KB
-main task) and any `\u0000`. After parsing it refuses duplicate keys, objects with more than 128 fields, and text
+main task), any `\u0000` or raw control byte inside a string (cJSON copies raw bytes, so a NUL would cut a string
+short), and anything outside strings that is not ASCII or is a control byte other than space, tab, CR and LF (a
+UTF-8 BOM, for one). After parsing it refuses duplicate keys, objects with more than 128 fields, and text
 after the JSON object. Where it is looser than `parse()`:
 
 - cJSON cannot tell `1` from `1.0`, and it reads a leading zero (`01`) as a number, so the box accepts both.

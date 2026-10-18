@@ -242,8 +242,8 @@ def check(meta, frames):
     if not is_int(meta.get("format")) or meta["format"] != FORMAT:
         e.append(f"format must be {FORMAT}")
     name = meta.get("name")
-    if (not isinstance(name, str) or not 1 <= len(name) <= 24 or len(name.encode("utf-8")) > MAX_NAME_BYTES
-            or not name.isprintable()):
+    if (not isinstance(name, str) or not 1 <= len(name) <= 24 or not name.isprintable()  # before encode: a lone
+            or len(name.encode("utf-8")) > MAX_NAME_BYTES):                                   # surrogate can't encode
         e.append(f"name must be 1 to 24 printable characters, at most {MAX_NAME_BYTES} bytes as UTF-8")
     if n == 0:
         e.append("the sheet has no frames")

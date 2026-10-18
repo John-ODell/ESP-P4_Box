@@ -244,7 +244,7 @@ class Errors(unittest.TestCase):
         self.assertEqual(self.errors(add("a" * 32)), "")
 
     def test_pet_name(self):
-        for bad in ("Dol\nphin", "x" * 25, "\u00e9" * 25, "\U0001F42C" * 13, "\t"):
+        for bad in ("Dol\ud800", "Dol\nphin", "x" * 25, "\u00e9" * 25, "\U0001F42C" * 13, "\t"):
             with self.subTest(repr(bad)):
                 self.assertIn("name must be", self.errors(lambda m: m.update(name=bad)))
         self.assertEqual(self.errors(lambda m: m.update(name="Flipper the 2nd")), "")

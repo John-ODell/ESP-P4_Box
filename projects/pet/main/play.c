@@ -1,5 +1,5 @@
 /* Play state (#63). Happiness drifts down one point every PET_HAPPY_DECAY_MIN awake minutes, never below
- * PET_HAPPY_FLOOR, and goes up with feeding (and later petting and Pet Says). Snacks left = today's contributions
+ * PET_HAPPY_FLOOR, and goes up with feeding, petting (less for each stroke in a row) and later Pet Says. Snacks left = today's contributions
  * minus snacks eaten today; the eaten count resets at local midnight once the clock is set. A total counts only on the
  * day its state was made (the date in its ts), so a retained or late state from yesterday gives no snacks; until the
  * clock is set and a total for today is in, play_snacks() is -1. Saved to NVS namespace
@@ -20,6 +20,8 @@ static unsigned s_day;          /* YYYYMMDD of s_eaten, 0 until the clock is fir
 static int s_total = -1;        /* today.total from the bridge, -1 until the first state */
 static unsigned s_total_day;    /* YYYYMMDD the bridge made that total on */
 static int s_awake_min, s_since_save_min;
+static int s_strokes;           /* recent strokes, at most what takes the gain to 0; each minute forgets two, so a
+                                   few minutes' rest makes petting count again */
 static bool s_dirty;
 
 static void save(const char *why)
@@ -133,6 +135,7 @@ void play_set_today(int total, const char *ts)
 void play_tick(bool asleep)
 {
     check_day();
+    s_strokes = s_strokes > 2 ? s_strokes - 2 : 0;
     if (!asleep && ++s_awake_min >= PET_HAPPY_DECAY_MIN) {
         s_awake_min = 0;
         if (s_happy > PET_HAPPY_FLOOR) {
@@ -174,6 +177,18 @@ bool play_feed(void)
     save("fed");
     ESP_LOGI(TAG, "fed: %d left, happiness %d", play_snacks(), s_happy);
     return true;
+}
+
+int play_pet(void)
+{
+    int gain = PET_HAPPY_PET - s_strokes / PET_PET_FADE;
+    gain = gain > 0 ? gain : 0;
+    if (s_strokes < PET_HAPPY_PET * PET_PET_FADE) {   /* past this the gain is 0 anyway: a long rub costs no more */
+        s_strokes++;
+    }
+    set_happy(s_happy + gain);
+    ESP_LOGI(TAG, "petted: +%d (stroke %d), happiness %d", gain, s_strokes, s_happy);
+    return gain;
 }
 
 void play_add(int delta, const char *why)

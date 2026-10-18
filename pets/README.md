@@ -77,7 +77,9 @@ To change the pet built into the firmware instead (what the box draws when there
 - **name**: what the box calls the pet, 1 to 24 printable characters.
 - **colors**: `ink` is the pet itself, `sleep_ink` the pet at night, `background` and `panel` the screen and overlays,
   `dim` secondary text, `accent`, `warn` and `good` the highlights (level bar, streak at risk, goal hit).
-- **play**: `snack` is what the pet eats when fed, `heart` shows when it is petted, `pads` are the four Pet Says colours.
+- **play**: `snack` is what the pet eats when fed, `heart` floats up (in the `accent` colour) when it is petted, `pads`
+  are the four Pet Says colours. Petting also plays the animation named `happy/wiggle` if the pet has one, else its
+  `celebrate`.
 
 `petpack.py check` lists every problem it finds, in plain words. The binary `.petpack` layout is in
 [`notes/pet-packs.md`](../notes/pet-packs.md).

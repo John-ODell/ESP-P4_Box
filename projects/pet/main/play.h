@@ -12,4 +12,5 @@ int play_happiness(void);               /* 0..100 */
 int play_snacks(void);                  /* snacks left today; -1 until the clock is set and a total for today is in */
 int play_eaten(void);                   /* snacks eaten today */
 bool play_feed(void);                   /* eat one snack: false if none is left */
-void play_add(int delta, const char *why); /* petting (#64), Pet Says (#65) */
+int play_pet(void);                     /* a stroke: adds happiness with diminishing returns; returns the gain */
+void play_add(int delta, const char *why); /* Pet Says (#65) */

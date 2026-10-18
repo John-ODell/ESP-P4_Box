@@ -10,4 +10,6 @@ void anim_play(int reaction, bool loop_until_ack); /* PET_REACT_*; preempts idle
 void anim_set_sleeping(bool sleeping);             /* night mode: loop the sleep animation */
 bool anim_ack(void);                               /* tap: stop a looping reaction; true if one was running */
 bool anim_reaction_active(void);
+void anim_pet(void);                               /* stroked: a happy wiggle once, unless a level-up or notice is
+                                                      looping */
 void anim_set_ink(lv_color_t color);

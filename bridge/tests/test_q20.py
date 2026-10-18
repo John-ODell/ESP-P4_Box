@@ -1,9 +1,14 @@
 import json
+import os
+import stat
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 
-from petbrain.q20 import (TOPIC_ASK, TURNS, MAX_Q, ModelError, Q20, build_prompt, clean, parse_reply,
-                          run_command)
+from petbrain.q20 import (TOPIC_ASK, TOPIC_IN, TURNS, MAX_Q, ModelError, Q20, attach, build_prompt, clean,
+                          parse_reply, run_command)
 
 
 class Box:
@@ -16,7 +21,7 @@ class Box:
         self.q20 = Q20(lambda topic, payload: self.sent.append((topic, json.loads(payload))), ask=self.ask,
                        spawn=lambda f: f())
 
-    def ask(self, prompt):
+    def ask(self, prompt, timeout=None):
         self.prompts.append(prompt)
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
@@ -74,11 +79,55 @@ class GameTests(unittest.TestCase):
         self.assertEqual(box.last()["n"], 2)
 
     def test_junk_is_ignored(self):
-        box = Box()
+        box = Box('{"q": "Is it alive?"}')
         for payload in (b"not json", b"[]", b'{"game": "x", "op": "start"}', b'{"game": true, "op": "start"}',
                         b'{"game": 3, "op": "dance"}', b'{"op": "start"}'):
             box.q20.handle(payload)
         self.assertEqual(box.sent, [])
+        box.send(game=3, op="start")
+        for bad in ({"n": 1, "a": []}, {"n": 1, "a": {"x": 1}}, {"n": True, "a": "yes"}, {"n": "1", "a": "yes"},
+                    {"a": "yes"}):
+            box.send(game=3, op="answer", **bad)
+        self.assertEqual(len(box.prompts), 1)
+        self.assertIsNone(box.q20._games[3].turns[-1][2])
+
+    def test_any_failure_frees_the_game_and_tells_the_box(self):
+        box = Box(RuntimeError("boom"), '{"q": "Is it alive?"}')
+        with self.assertLogs("bridge", "ERROR"):
+            box.send(game=3, op="start")
+        self.assertEqual(box.last(), {"game": 3, "error": "Something went wrong on the bridge."})
+        self.assertEqual(box.q20._calls, 0)
+        box.send(game=3, op="start")                     # the same box can start again
+        self.assertEqual(box.last(), {"game": 3, "n": 1, "q": "Is it alive?"})
+
+    def test_one_model_call_at_a_time(self):
+        box = Box()
+        held = []
+        box.q20._spawn = held.append
+        box.send(game=1, op="start")
+        box.send(game=2, op="start")
+        self.assertEqual(box.last(), {"game": 2, "error": "Busy with another game. Try again soon."})
+        self.assertNotIn(2, box.q20._games)
+        self.assertEqual(len(held), 1)
+        box.replies = ['{"q": "Is it alive?"}']
+        held[0]()
+        self.assertEqual(box.last(), {"game": 1, "n": 1, "q": "Is it alive?"})
+        self.assertEqual(box.q20._calls, 0)
+
+    def test_no_retry_without_time_left(self):
+        box = Box("gibberish", '{"q": "never asked"}')
+        box.q20._timeout = 1   # less than MIN_RETRY
+        box.send(game=5, op="start")
+        self.assertEqual(len(box.prompts), 1)
+        self.assertEqual(box.last(), {"game": 5, "error": "The AI's reply did not make sense. Try again."})
+
+    def test_attach_never_lets_an_exception_reach_paho(self):
+        client = SimpleNamespace(callbacks={}, publish=lambda *a, **k: None)
+        client.message_callback_add = lambda topic, cb: client.callbacks.__setitem__(topic, cb)
+        game = attach(client)
+        game.handle = lambda payload: 1 / 0
+        with self.assertLogs("bridge", "ERROR"):
+            client.callbacks[TOPIC_IN](client, None, SimpleNamespace(payload=b"{}"))
 
     def test_turn_20_must_be_a_guess_and_a_wrong_one_ends_the_game(self):
         box = Box('{"q": "Q1?"}')
@@ -88,6 +137,7 @@ class GameTests(unittest.TestCase):
         box.replies = ['{"q": "One more?"}', '{"q": "Still asking?"}']
         box.send(game=4, op="answer", n=TURNS - 1, a="no")
         self.assertIn("It is the last turn, so you must guess.", box.prompts[-1])
+        self.assertIn("reply with a guess, not a question", box.prompts[-1])
         self.assertEqual(box.last(), {"game": 4, "error": "The AI's reply did not make sense. Try again."})
         self.assertNotIn(4, box.q20._games)
 
@@ -155,6 +205,19 @@ class CommandTests(unittest.TestCase):
             run_command([sys.executable, "-c", "raise SystemExit(3)"], "", 10)
         with self.assertRaisesRegex(ModelError, "No no-such-model-cli on the bridge"):
             run_command(["no-such-model-cli"], "", 10)
+        with self.assertRaisesRegex(ModelError, "is empty"):
+            run_command([], "", 10)
+        with tempfile.TemporaryDirectory() as d:
+            plain = Path(d) / "model"
+            plain.write_text("not a program")
+            os.chmod(plain, stat.S_IRUSR | stat.S_IWUSR)
+            with self.assertRaisesRegex(ModelError, "Could not run model"):
+                run_command([str(plain)], "", 10)
+
+    def test_a_reply_that_is_not_utf8_is_still_read(self):
+        out = run_command([sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'{\"q\": \"Is it \\xff?\"}')"],
+                          "", 10)
+        self.assertEqual(parse_reply(out, False), {"q": "Is it ?"})
 
 
 if __name__ == "__main__":

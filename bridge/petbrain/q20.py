@@ -10,8 +10,9 @@ Bridge -> box on `pet/q20/ask`, never retained:
     {"game": 7, "n": 9, "guess": "a toaster"}
     {"game": 7, "error": "The AI took longer than 40 s."}
 
-`game` is a number the box picks for each game. Turns run 1 to 20, and a question or a guess uses one each; turn 20 is
+`game` is a new number the box picks for every game (at random, so it does not repeat after a reboot). Turns run 1 to 20, and a question or a guess uses one each; turn 20 is
 always a guess. "right" ends the game, and so does "wrong" on turn 20: the box knows both, so nothing is sent back.
+One model call runs at a time; a game that starts while another box's turn is being worked on gets a "busy" error.
 
 The model is PET_Q20_CMD, any command that reads the prompt on stdin and prints a reply holding {"q": ...} or
 {"guess": ...}. The default is Claude Code on Haiku with the login already on this computer, so no API key: no tools
@@ -29,6 +30,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -40,7 +42,8 @@ MAX_Q = 120        # characters the box shows for a question
 MAX_GUESS = 60
 MAX_GAMES = 4      # games the bridge remembers; the oldest goes first (a box that vanished mid-game)
 DEFAULT_CMD = "claude -p --model haiku --tools '' --setting-sources '' --no-session-persistence"
-DEFAULT_TIMEOUT = 40   # seconds; the box gives up after 50
+DEFAULT_TIMEOUT = 40   # seconds for a turn, retry included; the box gives up after 50
+MIN_RETRY = 5          # seconds a retry needs left, or the turn fails at once
 QUESTION_ANSWERS = {"yes": "yes", "no": "no", "unsure": "not sure"}
 GUESS_ANSWERS = {"right", "wrong"}
 log = logging.getLogger("bridge")
@@ -118,14 +121,18 @@ def command() -> list[str]:
 
 
 def run_command(argv: list[str], prompt: str, timeout: float) -> str:
-    name = Path(argv[0]).name if argv else "nothing"
+    if not argv:
+        raise ModelError("PET_Q20_CMD is empty on the bridge computer.")
+    name = Path(argv[0]).name
     try:
-        done = subprocess.run(argv, input=prompt, capture_output=True, text=True, timeout=timeout,
+        done = subprocess.run(argv, input=prompt, capture_output=True, text=True, errors="replace", timeout=timeout,
                               cwd=tempfile.gettempdir())
     except FileNotFoundError:
         raise ModelError(f"No {name} on the bridge computer: set PET_Q20_CMD.") from None
     except subprocess.TimeoutExpired:
         raise ModelError(f"The AI took longer than {timeout:.0f} s.") from None
+    except OSError as exc:
+        raise ModelError(f"Could not run {name} on the bridge computer ({exc.strerror}).") from None
     if done.returncode != 0:
         log.warning("q20: %s exited %d: %s", name, done.returncode, done.stderr.strip()[-300:])
         raise ModelError(f"The AI did not answer ({name} exited {done.returncode}).")
@@ -133,15 +140,17 @@ def run_command(argv: list[str], prompt: str, timeout: float) -> str:
 
 
 class Q20:
-    def __init__(self, publish: Callable[[str, str], None], ask: Callable[[str], str] | None = None,
+    def __init__(self, publish: Callable[[str, str], None], ask: Callable[[str, float], str] | None = None,
                  spawn: Callable[[Callable[[], None]], None] | None = None) -> None:
         self._publish = publish
+        self._timeout = float(os.environ.get("PET_Q20_TIMEOUT") or DEFAULT_TIMEOUT)
         if ask is None:
-            argv, timeout = command(), float(os.environ.get("PET_Q20_TIMEOUT") or DEFAULT_TIMEOUT)
-            ask = lambda prompt: run_command(argv, prompt, timeout)  # noqa: E731
-        self._ask = ask
+            argv = command()
+            ask = lambda prompt, timeout: run_command(argv, prompt, timeout)  # noqa: E731
+        self._ask = ask   # (prompt, seconds) -> the model's reply
         self._spawn = spawn or (lambda f: threading.Thread(target=f, daemon=True).start())
         self._games: dict[int, Game] = {}
+        self._calls = 0   # model calls running now: at most one, so a flood of starts cannot fork a flood of models
         self._lock = threading.Lock()
 
     def handle(self, payload) -> None:
@@ -154,6 +163,10 @@ class Q20:
             return
         if not isinstance(gid, int) or isinstance(gid, bool):
             return
+        n, a = msg.get("n"), msg.get("a")
+        if not isinstance(n, int) or isinstance(n, bool) or not isinstance(a, str):
+            n, a = None, None
+        busy = False
         with self._lock:
             game = self._games.get(gid)
             if op == "start" and game is None:
@@ -165,9 +178,8 @@ class Q20:
                 self._games.pop(gid, None)
                 log.info("q20: game %d closed on the box", gid)
                 return
-            elif op == "answer" and game is not None and game.pending is None and msg.get("n") == len(game.turns):
+            elif op == "answer" and game is not None and game.pending is None and n == len(game.turns):
                 kind, text, answer = game.turns[-1]
-                a = msg.get("a")
                 if answer is not None or a not in (QUESTION_ANSWERS if kind == "q" else GUESS_ANSWERS):
                     return
                 game.turns[-1][2] = a
@@ -178,26 +190,44 @@ class Q20:
                     return
             else:
                 return
-            n = game.pending = len(game.turns) + 1
-            prompt = build_prompt(game.turns, n)
-        self._spawn(lambda: self._turn(gid, n, prompt))
+            if self._calls > 0:   # another game's turn is with the model
+                del self._games[gid]
+                busy = True
+            else:
+                self._calls += 1
+                n = game.pending = len(game.turns) + 1
+                prompt = build_prompt(game.turns, n)
+        if busy:
+            log.info("q20: game %d refused: the model is busy with another game", gid)
+            self._publish(TOPIC_ASK, json.dumps({"game": gid, "error": "Busy with another game. Try again soon."}))
+            return
+        self._spawn(lambda: self._turn(gid, game, n, prompt))
 
-    def _turn(self, gid: int, n: int, prompt: str) -> None:
+    def _turn(self, gid: int, game: Game, n: int, prompt: str) -> None:
         """Ask the model for turn n (on its own thread: a call takes seconds) and send the box what it said."""
+        final = n >= TURNS
+        deadline = time.monotonic() + self._timeout
         try:
-            reply = parse_reply(self._ask(prompt), final=n >= TURNS)
-            if reply is None:   # one more try with a nudge before the box hears about it
-                reply = parse_reply(self._ask(prompt + "\n\nYour last reply could not be read. Reply with only the "
-                                              "JSON line."), final=n >= TURNS)
+            reply = parse_reply(self._ask(prompt, self._timeout), final)
+            if reply is None:   # one more try with a nudge, in the time left, before the box hears about it
+                left = deadline - time.monotonic()
+                if left < MIN_RETRY:
+                    raise ModelError("The AI's reply did not make sense. Try again.")
+                nudge = ("This is the last turn: reply with a guess, not a question." if final else
+                         "Your last reply could not be read.")
+                reply = parse_reply(self._ask(f"{prompt}\n\n{nudge} Reply with only the JSON line.", left), final)
             if reply is None:
                 raise ModelError("The AI's reply did not make sense. Try again.")
         except ModelError as exc:
-            out = {"game": gid, "error": str(exc)}
+            out = {"game": gid, "error": clean(str(exc), MAX_Q)}
+        except Exception:   # anything else still frees the game and tells the box
+            log.exception("q20: game %d turn %d failed", gid, n)
+            out = {"game": gid, "error": "Something went wrong on the bridge."}
         else:
             out = {"game": gid, "n": n, **reply}
         with self._lock:
-            game = self._games.get(gid)
-            if game is None or game.pending != n:
+            self._calls -= 1
+            if self._games.get(gid) is not game or game.pending != n:
                 return   # closed on the box while the model was thinking
             if "error" in out:
                 del self._games[gid]
@@ -211,6 +241,13 @@ class Q20:
 def attach(client) -> Q20:
     """Answer the box on pet/q20 from the bridge loop. The caller subscribes TOPIC_IN (so a reconnect does too)."""
     game = Q20(lambda topic, payload: client.publish(topic, payload, qos=1, retain=False))
-    client.message_callback_add(TOPIC_IN, lambda c, userdata, msg: game.handle(msg.payload))
+
+    def on_message(c, userdata, msg) -> None:
+        try:
+            game.handle(msg.payload)
+        except Exception:   # an exception here would stop paho's network thread, and the whole bridge with it
+            log.exception("q20: message dropped: %r", msg.payload[:120])
+
+    client.message_callback_add(TOPIC_IN, on_message)
     log.info("20 Questions: answering on %s with %s", TOPIC_IN, shlex.join(command()[:2]))
     return game

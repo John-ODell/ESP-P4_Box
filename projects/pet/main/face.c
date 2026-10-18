@@ -8,14 +8,16 @@
 #include "sched.h"
 #include "esp_log.h"
 
-#define BG_COLOR     lv_color_hex(0x0b0f14)
-#define PANEL_COLOR  lv_color_hex(0x151d26)
-#define INK_COLOR    lv_color_hex(0xe6f0f5)
-#define DIM_COLOR    lv_color_hex(0x5c6b78)
-#define ACCENT_COLOR lv_color_hex(0x4fd1c5)
-#define WARN_COLOR   lv_color_hex(0xf6ad55)
-#define GOOD_COLOR   lv_color_hex(0x68d391)
-#define SLEEP_INK    lv_color_hex(0x7f8e9a)
+/* Colours come from the pet (pet_pack.c), set once in face_create. */
+static const pet_def_t *s_pet;
+#define BG_COLOR     lv_color_hex(s_pet->colors.background)
+#define PANEL_COLOR  lv_color_hex(s_pet->colors.panel)
+#define INK_COLOR    lv_color_hex(s_pet->colors.ink)
+#define DIM_COLOR    lv_color_hex(s_pet->colors.dim)
+#define ACCENT_COLOR lv_color_hex(s_pet->colors.accent)
+#define WARN_COLOR   lv_color_hex(s_pet->colors.warn)
+#define GOOD_COLOR   lv_color_hex(s_pet->colors.good)
+#define SLEEP_INK    lv_color_hex(s_pet->colors.sleep_ink)
 
 static const char *TAG = "face";
 static lv_obj_t *s_level, *s_xp_bar, *s_xp_text, *s_streak, *s_clock, *s_today, *s_mood, *s_link, *s_status, *s_banner;
@@ -115,13 +117,14 @@ static void banner(const char *text, lv_color_t color, bool sticky)
     }
 }
 
-void face_create(lv_obj_t *parent)
+void face_create(lv_obj_t *parent, const pet_def_t *pet)
 {
+    s_pet = pet;
     lv_obj_set_style_bg_color(parent, BG_COLOR, 0);
     lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
     lv_obj_remove_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
 
-    anim_init(parent, PET_SPRITE_X, PET_SPRITE_Y, PET_SPRITE_SCALE);
+    anim_init(parent, pet, PET_SPRITE_X, PET_SPRITE_Y, PET_SPRITE_SCALE);
 
     s_level = label(parent, &lv_font_montserrat_48, ACCENT_COLOR, LV_ALIGN_TOP_LEFT, 24, 16);
     lv_label_set_text(s_level, "LV -");
@@ -255,12 +258,12 @@ void face_apply_state(const pet_state_t *s, bool celebrate)
         if (s->events & PET_EVENT_LEVEL_UP) {
             ESP_LOGI(TAG, "level up -> celebrate until tap");
             banner("LEVEL UP!  tap to continue", GOOD_COLOR, true);
-            anim_play(PET_ANIM_CELEBRATE, true);
+            anim_play(PET_REACT_CELEBRATE, true);
             apply_hold(); /* keep the screen on until the tap */
         } else {
             ESP_LOGI(TAG, "%s -> celebrate", (s->events & PET_EVENT_BIG_DAY) ? "big day" : "goal hit");
             banner((s->events & PET_EVENT_BIG_DAY) ? "BIG DAY!" : "daily goal hit", GOOD_COLOR, false);
-            anim_play(PET_ANIM_CELEBRATE, false);
+            anim_play(PET_REACT_CELEBRATE, false);
         }
     }
 }
@@ -372,7 +375,7 @@ void face_set_notice(const pet_notice_t *n, int pos, int count, int held, bool a
         ESP_LOGI(TAG, "notice: %s %s %s%s", n->source, n->session, n->kind,
                  s_banner_sticky ? " (level-up celebration keeps playing)" : "");
         if (!s_banner_sticky) { /* the notice reaction would end the until-tap celebration loop */
-            anim_play(PET_ANIM_NOTICE, false);
+            anim_play(PET_REACT_NOTICE, false);
         }
     }
     apply_hold();

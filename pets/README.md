@@ -24,11 +24,21 @@ pets/dolphin/
    python3 tools/petpack.py preview pets/yourpet -o sheet.png
    ```
 
-5. Pack it for the box: `python3 tools/petpack.py build pets/yourpet -o yourpet.petpack`. Loading packs on the box
-   comes with #67 (USB) and #68 (Wi-Fi).
+5. Pack it and write it to the box over USB (`pip install esptool` if you don't have it; the port is something like
+   `/dev/cu.usbmodem...` on macOS, `/dev/ttyACM0` on Linux or `COM3` on Windows):
 
-To change the pet built into the firmware instead, edit `dolphin/` and run `python3 tools/petpack.py c pets/dolphin`,
-which rewrites `projects/pet/main/sprites.c` and `sprites.h`. Then rebuild.
+   ```bash
+   python3 tools/petpack.py build pets/yourpet -o yourpet.petpack
+   python3 -m esptool --chip esp32p4 -p PORT -b 921600 write_flash 0x820000 yourpet.petpack
+   ```
+
+   The box restarts and draws your pet. Only the pack's own bytes are written, so Wi-Fi settings and the firmware stay
+   as they are. If the pack fails a check the box draws the dolphin and says why on the serial console (115200 baud,
+   a line starting `pet_pack:`). To go back to the dolphin, erase the pack's first sector:
+   `python3 -m esptool --chip esp32p4 -p PORT erase_region 0x820000 0x1000`. Sending a pack over Wi-Fi comes with #68.
+
+To change the pet built into the firmware instead (what the box draws when there is no pack), edit `dolphin/` and run
+`python3 tools/petpack.py c pets/dolphin`, which rewrites `projects/pet/main/sprites.c` and `sprites.h`. Then rebuild.
 
 ## pet.json
 

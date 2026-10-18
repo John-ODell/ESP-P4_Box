@@ -30,10 +30,16 @@ pixel in the most significant bit of each byte. A 1 bit is ink. Frame numbers in
 out only the blank or unused cells after the highest frame the metadata uses.
 
 **Limits** (format 1): at most 1024 frames, 128 animations, 64 frames per animation; animation names up to 32
-characters (`[a-z0-9_]+` with one optional `/`, not `count`, and no two that differ only in `/` versus `_`); a pet name
+characters (`[a-z0-9_]+` with one optional `/`); a pet name
 of 1 to 24 printable characters and at most 48 bytes of UTF-8; `dx`/`dy` -8 to 8; `ms` 20 to 10000; idle weights 1 to
 255; `json_len` at most 65536. So a pack is at most 24 + 65536 + 1024 x 240 = 311320 bytes (about 304 KB), which fits
-easily in the 7 MB `storage` partition, where the loader expects it at offset 0.
+easily in the 7 MB `storage` partition, where the loader expects it at offset 0 (flash address 0x820000 with the
+current `partitions.csv`). Write one with `esptool write_flash 0x820000 pet.petpack`; erase the first 4 KB there to go
+back to the built-in pet.
+
+**The firmware loader** (`projects/pet/main/pet_pack.c`) makes the same checks as `parse()`, with two known
+differences: cJSON cannot tell `1` from `1.0`, so the box accepts a whole number written as `1.0`, and it ignores JSON
+fields it does not know. Packs from `petpack.py build` never contain either.
 
 **Compatibility.** A change that older firmware could misread gets a new `format` number. Unknown JSON fields are an
 error in `check`, so a newer field cannot slip into an older pack unnoticed.

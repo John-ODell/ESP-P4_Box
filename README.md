@@ -104,8 +104,10 @@ python3 tools/petpack.py preview pets/mypet -o sheet.png
 python3 tools/petpack.py build   pets/mypet -o mypet.petpack
 ```
 
-[`pets/README.md`](pets/README.md) walks through it. Loading a pack onto the box without rebuilding the firmware comes
-with #67, and sending one over Wi-Fi with #68.
+Then write the pack to the box over USB, no rebuild needed:
+`python3 -m esptool --chip esp32p4 -p PORT -b 921600 write_flash 0x820000 mypet.petpack`. The box draws the new pet
+after it restarts, and falls back to the dolphin if the pack is damaged. [`pets/README.md`](pets/README.md) walks
+through all of it. Sending a pack over Wi-Fi comes with #68.
 
 ## Board notes
 

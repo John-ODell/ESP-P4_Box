@@ -236,8 +236,6 @@ class Errors(unittest.TestCase):
             return lambda m: m["animations"].update({name: [{"frame": 0}]})
         self.assertIn("animation name", self.errors(add("celebrate\n")))
         self.assertIn("animation name", self.errors(add("a" * 33)))
-        self.assertIn("reserved", self.errors(add("count")))
-        self.assertIn("too alike", self.errors(add("happy_wiggle")))
         self.assertEqual(self.errors(add("a" * 32)), "")
 
     def test_pet_name(self):

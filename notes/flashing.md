@@ -228,3 +228,22 @@ one to the next, and the tap count never changes across the gaps between them.
   although the local `projects/pet/sdkconfig` has `CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y` (that file is
   untracked, so it may differ from the flashed build). Use the UART port (`/dev/cu.usbmodem5B610404781`,
   "USB Single Serial") for logs and flashing.
+
+## 2026-10-17: pet packs from the storage partition (#67)
+
+- `pet_pack.c` reads a pack from `storage` (flash 0x820000) before the display starts. On the box, with the
+  firmware from this change: the dolphin pack loads in 41 ms and draws as the built-in pet; a recoloured copy
+  ("Ember", ink #F6AD55) loads in 40 ms; a pack with one flipped bit logs `pack checksum does not match`; a pack with
+  a good checksum but an idle entry naming a missing animation logs that reason; an erased first sector logs `no pet
+  pack in storage`. Each failure draws the built-in dolphin and the box boots normally. The dolphin pack passing its
+  checksum on the chip confirms `esp_rom_crc32_le(0, ...)` equals zlib's CRC-32.
+- The largest pack format 1 allows (1024 frames, 64 KB of metadata, 311 KB) first took 4.5 s, all of it in cJSON.
+  Measured on the box: `heap_caps_malloc(48, MALLOC_CAP_SPIRAM)` costs about 90 us, `free` about 27 us and `strtod`
+  about 31 us, and cJSON allocates every node and key separately. Giving cJSON a chunked PSRAM bump allocator for the
+  load, and mapping the pack with `esp_partition_mmap` instead of reading it into PSRAM (180 ms for 311 KB), brought
+  it to 0.85 s. Keep big JSON off the general heap on this board.
+- Internal RAM is tight: a 40 KB static array in a test build made ESP-Hosted's SDIO mempool fail at boot
+  (`HS_MP: mempool create failed: no mem`, assert in `sdio_mempool_create`). Large buffers go in PSRAM.
+- Resetting the box from a script without a replug: open the port with DTR and RTS asserted (no reset), then release
+  DTR for 150 ms with RTS held. On the CH343 auto-reset circuit that pulls EN low with IO0 high, a normal boot, and the
+  port stays open so the whole boot log is captured. Pulsing RTS instead pulls IO0 low and does not reset.

@@ -1,6 +1,7 @@
 # Pets
 
-Each folder here is one pet. `dolphin/` is the one built into the firmware.
+Each folder here is one pet. `dolphin/` is the one built into the firmware. `ember/` is the dolphin drawing in orange
+(the test pack from #68), ready to send with `bridge/.venv/bin/python tools/pack_push.py pets/ember`.
 
 ```
 pets/dolphin/

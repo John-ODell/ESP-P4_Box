@@ -16,6 +16,7 @@ bad arguments.
 from __future__ import annotations
 
 import argparse
+import errno
 import http.server
 import json
 import os
@@ -125,7 +126,7 @@ def main() -> int:
     ap.add_argument("out", nargs="?", type=Path, help="where to write the PNG (default: pet-<date>-<time>.png here)")
     ap.add_argument("--scale", type=int, default=1, choices=range(1, 5), help="repeat each pixel this many times")
     ap.add_argument("--ip", help="this computer's LAN address to listen on (default: the one that routes to the broker)")
-    ap.add_argument("--port", type=int, default=8072)
+    ap.add_argument("--port", type=int, default=8072, choices=range(1, 65536), metavar="PORT")
     ap.add_argument("--timeout", type=float, default=20, help="seconds to wait for the box")
     a = ap.parse_args()
     out = a.out or Path(time.strftime("pet-%Y%m%d-%H%M%S.png"))
@@ -138,7 +139,9 @@ def main() -> int:
     try:
         server = http.server.ThreadingHTTPServer((ip, a.port), Upload)
     except OSError as e:
-        print(f"cannot listen on {ip}:{a.port}: {e.strerror} (another screenshot.py running? try --port)")
+        hint = " (another screenshot.py running? try --port)" if e.errno == errno.EADDRINUSE else \
+            " (check --ip: it must be one of this computer's own addresses)"
+        print(f"cannot listen on {ip}:{a.port}: {e.strerror}{hint}")
         return 1
     threading.Thread(target=server.serve_forever, daemon=True).start()
 

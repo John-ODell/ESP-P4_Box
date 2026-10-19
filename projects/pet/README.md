@@ -157,10 +157,18 @@ SHA-256, a pack already on its way, or a firmware update running; an update is l
 after every MQTT connect, `running` with the pet drawn and its pack CRC (no CRC and the reason when it is the built-in
 pet). The tool exits 0 once the box comes back `running` with the new pack's CRC.
 
+**Screenshots** (#86): `bridge/.venv/bin/python tools/screenshot.py [out.png] [--scale 2]` saves what the screen shows
+as a PNG. The tool listens on port 8072 and sends `{"shot": "http://<mac>:8072/shot"}` on `pet/cmd`; the box
+(`main/shot_cmd.c`) renders its screen again with LVGL's snapshot into PSRAM (720x720 RGB565, about 1 MB) and POSTs the
+pixels back, which takes about 2 s. Nothing appears on screen, so the picture holds only what the pet draws. A box that
+cannot take the shot says why in an `X-Error` header and the tool exits 1; no answer within 20 s is a timeout. `--scale`
+repeats each pixel so the art stays sharp when it is shown larger.
+
 Console is UART0 at 115200. Layout:
 
 - `main/main.c`: boot, BSP start, touch handling, wiring between network, MQTT, schedule, and the face.
 - `main/face.c`: the scene: sprite in the middle, numbers around the edge, banner, session bubble, stats overlay.
+- `main/shot_cmd.c`: `{"shot": url}` on `pet/cmd`: an LVGL snapshot of the screen, POSTed to the URL (#86).
 - `main/menu.c`: the play menu over the pet. Feed drops a snack (`face_feed()`), Pet Says starts the game
   (`says_open()`), 20 Questions starts the other one (`q20_open()`), Settings opens a stub page until the on-box Wi-Fi
   setup (#53).

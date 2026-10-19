@@ -8,7 +8,8 @@
 #define PET_TOPIC_EVENT  "pet/event"
 #define PET_TOPIC_NOTIFY "pet/notify"   /* retained: the AI sessions waiting for a person, newest first */
 #define PET_TOPIC_ACK    "pet/ack"      /* box -> bridge: {"source", "session"} drops one entry */
-#define PET_TOPIC_CMD    "pet/cmd"      /* Mac -> box, never retained: {"ota": url} or {"pack": url, "sha256": hex} */
+#define PET_TOPIC_CMD    "pet/cmd"      /* Mac -> box, never retained: {"ota": url}, {"pack": url, "sha256": hex}
+                                           or {"shot": url} */
 #define PET_TOPIC_OTA    "pet/ota"      /* box -> Mac, retained: the image it runs, or how an update is going */
 #define PET_TOPIC_PACK   "pet/pack"     /* box -> Mac, retained: the pet it draws, or how a new pack is going */
 #define PET_TOPIC_Q20    "pet/q20"      /* box -> bridge, never retained: 20 Questions start, answers, quit (#78) */

@@ -55,7 +55,7 @@ def in_tailnet(address: str) -> bool:
 
 
 def start(cfg: dict, notifier: Notifier, detect: Callable = detect_ip, sleep: Callable = time.sleep,
-          make: Callable = make_server) -> threading.Thread | None:
+          make: Callable = make_server, todo=None) -> threading.Thread | None:
     """Start the tailnet listener in the background when it is wanted and safe; None when it will not run."""
     if not wanted(cfg.get("tailnet")):
         return None
@@ -75,7 +75,7 @@ def start(cfg: dict, notifier: Notifier, detect: Callable = detect_ip, sleep: Ca
             host = fixed or detect()
             if host:
                 try:
-                    server = make(host, cfg["http_port"], notifier, token=token, allow=TAILNET)
+                    server = make(host, cfg["http_port"], notifier, token=token, allow=TAILNET, todo=todo)
                 except OSError as exc:
                     if not said:
                         log.warning("tailnet listener not up yet on %s:%s (%s); retrying every %d s",

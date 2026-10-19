@@ -10,7 +10,8 @@ moment it connects. The previous state is kept in bridge/var/last_state.json so
 one-shot events survive a restart. Session notifications from AI tools arrive on
 the local HTTP endpoint (notify_api.py) and go out on `pet/event` and the retained
 `pet/notify`. 20 Questions games from the box arrive on `pet/q20` and are answered on
-`pet/q20/ask` (q20.py).
+`pet/q20/ask` (q20.py). The to-do list is changed on the same endpoint (POST /todo), shown
+on the retained `pet/todo` and ticked from the box on `pet/todo/tick` (todo.py).
 """
 from __future__ import annotations
 
@@ -30,11 +31,13 @@ import paho.mqtt.client as mqtt
 from .brain import compute_state
 from .github_source import fetch_days, load_dotenv
 from . import q20, tailnet
+from .todo import TOPIC_TICK, Todo
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = ROOT / "var" / "last_state.json"
 PENDING_PATH = ROOT / "var" / "pending.json"  # the sessions still waiting, kept across bridge restarts (#12)
+TODO_PATH = ROOT / "var" / "todo.json"        # the to-do list (#89)
 TOPIC_STATE = "pet/state"
 log = logging.getLogger("bridge")
 
@@ -107,13 +110,15 @@ def publish_state(client: mqtt.Client, state: dict) -> None:
 
 def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier | None:
     """Session notifications: pet/ack from the box, the local HTTP endpoint, and the pending list that survived the
-    last stop (bridge/var/pending.json) published on start. None when another bridge already serves the endpoint."""
+    last stop (bridge/var/pending.json) published on start. The to-do list (bridge/var/todo.json) rides on the same
+    endpoint and is ticked on pet/todo/tick. None when another bridge already serves the endpoint."""
     def publish(topic: str, payload: str, retain: bool) -> None:
         client.publish(topic, payload, qos=1, retain=retain)
 
     notifier = Notifier(publish, lambda: datetime.now(cfg["tz"]), store=PENDING_PATH)
+    todo = Todo(publish, lambda: datetime.now(cfg["tz"]), store=TODO_PATH)
     try:
-        server = make_server(cfg["http_host"], cfg["http_port"], notifier)
+        server = make_server(cfg["http_host"], cfg["http_port"], notifier, todo=todo)
     except OSError as exc:
         # Most likely another bridge already serves the endpoint: leave its pending list and pet/ack alone.
         log.error("notify endpoint not started on %s:%s (%s); the GitHub loop runs without notifications "
@@ -121,10 +126,12 @@ def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier | None:
                   cfg["http_host"], cfg["http_port"], exc)
         return None
     client.message_callback_add(TOPIC_ACK, lambda c, userdata, msg: notifier.ack(msg.payload))
+    client.message_callback_add(TOPIC_TICK, lambda c, userdata, msg: todo.tick(msg.payload))
     notifier.publish_pending()  # what survived the restart, or the empty list: either way the box hears the truth
+    todo.publish()
     serve_in_thread(server)
-    log.info("notify endpoint: POST http://%s:%d/event", cfg["http_host"], cfg["http_port"])
-    tailnet.start(cfg, notifier)  # only when PET_TAILNET=on and a long token is set; see petbrain/tailnet.py
+    log.info("notify endpoint: POST http://%s:%d/event and /todo", cfg["http_host"], cfg["http_port"])
+    tailnet.start(cfg, notifier, todo=todo)  # only when PET_TAILNET=on and a long token is set; see petbrain/tailnet.py
     return notifier
 
 
@@ -160,7 +167,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = config()
     loop_mode = not (a.once or a.state_file)
-    client = connect(cfg, topics=(TOPIC_ACK, q20.TOPIC_IN) if loop_mode else ())
+    client = connect(cfg, topics=(TOPIC_ACK, TOPIC_TICK, q20.TOPIC_IN) if loop_mode else ())
     if loop_mode:
         if start_notifier(cfg, client) is not None:
             q20.attach(client)   # like the notifier, left to the bridge already running: two would both answer

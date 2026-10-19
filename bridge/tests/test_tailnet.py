@@ -100,7 +100,7 @@ class StartTests(unittest.TestCase):
         answers = iter([None, "100.79.52.11"])
         made, servers = [], []
 
-        def make(host, port, notifier, token=None, allow=()):
+        def make(host, port, notifier, token=None, allow=(), todo=None):
             made.append((host, token, allow))
             servers.append(make_server("127.0.0.1", 0, notifier, token=token, allow=allow))
             return servers[-1]

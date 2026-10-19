@@ -121,12 +121,19 @@ class Upload(http.server.BaseHTTPRequestHandler):
         print(f"http: {self.address_string()} {fmt % args}", flush=True)
 
 
+def port_number(text: str) -> int:
+    n = int(text)
+    if not 1 <= n <= 65535:
+        raise argparse.ArgumentTypeError(f"{n} is not a port (1 to 65535)")
+    return n
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Save the box's screen as a PNG.")
     ap.add_argument("out", nargs="?", type=Path, help="where to write the PNG (default: pet-<date>-<time>.png here)")
     ap.add_argument("--scale", type=int, default=1, choices=range(1, 5), help="repeat each pixel this many times")
     ap.add_argument("--ip", help="this computer's LAN address to listen on (default: the one that routes to the broker)")
-    ap.add_argument("--port", type=int, default=8072, choices=range(1, 65536), metavar="PORT")
+    ap.add_argument("--port", type=port_number, default=8072)
     ap.add_argument("--timeout", type=float, default=20, help="seconds to wait for the box")
     a = ap.parse_args()
     out = a.out or Path(time.strftime("pet-%Y%m%d-%H%M%S.png"))

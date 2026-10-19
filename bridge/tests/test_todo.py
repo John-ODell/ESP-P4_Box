@@ -3,14 +3,16 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from petbrain import todo as todo_mod
 from petbrain.notify_api import Notifier, make_server, serve_in_thread
-from petbrain.todo import MAX_ITEMS, SHOWN, TOPIC_TODO, Todo, TodoError, parse_ref
-from tests.test_tailnet import NO_PROXY, call, quiet
+from petbrain.todo import BUDGET, MAX_ITEMS, SHOWN, TOPIC_TODO, Todo, TodoError, parse_ref
+from tests.test_tailnet import LOCAL, NO_PROXY, TOKEN, call, quiet
 
 BRIDGE = Path(__file__).resolve().parent.parent
 T0 = datetime(2026, 10, 19, 9, 0, tzinfo=timezone.utc)
@@ -38,7 +40,8 @@ class RefTests(unittest.TestCase):
             self.assertEqual(parse_ref(raw), want, raw)
 
     def test_anything_else_is_refused(self):
-        for raw in ("#0", "abc", "#85 and #86", "owner#85", "https://github.com/a/b/pull/85", "#12345678"):
+        for raw in ("#0", "abc", "#85 and #86", "owner#85", "https://github.com/a/b/pull/85", "#12345678",
+                    "owner/repo85", "\u00f3wner/rep\u00f6#5", "#\u0665", "a" * 40 + "/repo#5", "o/" + "r" * 101 + "#5"):
             with self.assertRaises(TodoError, msg=raw):
                 parse_ref(raw)
 
@@ -102,6 +105,25 @@ class ListTests(unittest.TestCase):
         full = t.summary()["items"]
         self.assertEqual([i["id"] for i in full[-3:]], [4, 5, 2])   # done, most recently done first
 
+    def test_control_characters_never_reach_the_box(self):
+        t, sent = make()
+        item = t.add("tab\there\x01bell\x07\x7fend", "cl\naude")
+        self.assertEqual((item["text"], item["by"]), ("tab here bell end", "cl aude"))
+        self.assertNotIn("\\u", json.dumps(sent[-1][1]))
+        t.set_done(1, True, "evil\nINFO forged line")
+        self.assertEqual(t._items[0]["done_by"], "evil INFO forged line")
+
+    def test_pet_todo_stays_under_the_box_buffer_whatever_the_items_hold(self):
+        t, sent = make()
+        ref = "a" * 39 + "/" + "r" * 100 + "#1234567"
+        for _ in range(SHOWN + 2):
+            t.add('"' * 200, "\\" * 40, ref)
+        topic, payload, retain = sent[-1]
+        self.assertLessEqual(len(json.dumps(payload, separators=(",", ":"))), BUDGET)
+        self.assertGreater(len(payload["items"]), 0)
+        self.assertLess(len(payload["items"]), SHOWN)
+        self.assertEqual(payload["count"], SHOWN + 2)
+
     def test_a_full_list_drops_the_oldest_done_item_or_refuses_when_all_are_open(self):
         t, _ = make()
         for i in range(MAX_ITEMS):
@@ -149,9 +171,50 @@ class StoreTests(unittest.TestCase):
             {"id": 2, "text": ""}, {"text": "no id"}, "junk", {"id": 3, "text": "bad ref", "ref": "nope"}]}))
         with self.assertLogs("bridge.todo", "WARNING") as logs:
             t, _ = make(self.path)
-        self.assertEqual([i["text"] for i in t.summary()["items"]], ["kept"])
-        self.assertEqual(sum("not kept" in m for m in logs.output), 4)
+        self.assertEqual([(i["text"], i["ref"]) for i in t.summary()["items"]], [("kept", None), ("bad ref", None)])
+        self.assertEqual(sum("not kept" in m for m in logs.output), 4)   # three entries and one ref
         self.assertEqual(t.add("next")["id"], 4)
+
+    def test_wrong_types_in_a_hand_edited_file_never_stop_the_bridge(self):
+        self.path.parent.mkdir(parents=True)
+        for nxt in ("abc", None, [], 2.5, True, {}):
+            self.path.write_text(json.dumps({"next": nxt, "items": [
+                {"id": 1, "text": "a", "done": True, "done_ts": 5},
+                {"id": 2, "text": "b", "done": True, "done_ts": ["x"], "done_by": 7},
+                {"id": 3, "text": "c", "done": "false", "done_ts": "2026-10-19T09:00:00+00:00"},
+                {"id": 3, "text": "duplicate"}, {"id": True, "text": "bool id"}, {"id": -1, "text": "neg"},
+                {"id": 4, "text": "bad ref kept, ref dropped", "ref": "nope"}]}))
+            with self.assertLogs("bridge.todo", "WARNING"):
+                t, sent = make(self.path)
+            t.publish()
+            self.assertEqual([(i["id"], i["done"], i["ref"]) for i in t.summary()["items"]],
+                             [(3, False, None), (4, False, None), (1, True, None), (2, True, None)], nxt)
+            self.assertIsNone(t._items[1]["done_by"])
+            self.assertEqual(t.add("next")["id"], 5)
+            self.path.unlink()
+
+    def test_a_file_over_the_limit_is_trimmed_oldest_done_first(self):
+        self.path.parent.mkdir(parents=True)
+        items = [{"id": i, "text": f"t{i}", "done": i in (10, 20), "done_ts": f"2026-10-{i:02d}T09:00:00+00:00"}
+                 for i in range(1, MAX_ITEMS + 4)]
+        self.path.write_text(json.dumps({"next": 99, "items": items}))
+        t, _ = make(self.path)
+        ids = [i["id"] for i in t.summary()["items"]]
+        self.assertEqual(len(ids), MAX_ITEMS)
+        self.assertNotIn(10, ids)
+        self.assertNotIn(20, ids)
+        self.assertNotIn(1, ids)
+
+    def test_done_order_follows_the_real_moment_across_a_clock_change(self):
+        t, _ = make()
+        for i in range(2):
+            t.add(f"t{i}")
+        t.set_done(1, True)
+        t.set_done(2, True)
+        # 1:30 am EDT is earlier than 1:10 am EST the same night
+        t._items[0]["done_ts"] = "2026-11-01T01:30:00-04:00"
+        t._items[1]["done_ts"] = "2026-11-01T01:10:00-05:00"
+        self.assertEqual([i["id"] for i in t.summary()["items"]], [2, 1])
 
 
 class TickTests(unittest.TestCase):
@@ -212,6 +275,21 @@ class HttpTests(Served):
         self.assertEqual(call(self.url + "/todo", b"x" * 5000, {}), 413)
         self.assertEqual(self.sent, [])
 
+    def test_the_tailnet_server_needs_the_token_for_todo_too(self):
+        guarded = make_server("127.0.0.1", 0, Notifier(lambda *a: None, Clock()), token=TOKEN, allow=LOCAL,
+                              todo=self.todo)
+        serve_in_thread(guarded)
+        url = f"http://127.0.0.1:{guarded.server_address[1]}/todo"
+        try:
+            self.assertEqual(call(url, b'{"op":"add","text":"x"}', {}), 401)
+            self.assertEqual(call(url), 401)
+            self.assertEqual(self.sent, [])
+            self.assertEqual(call(url, b'{"op":"add","text":"x"}', {"Authorization": f"Bearer {TOKEN}"}), 200)
+            self.assertEqual(call(url, headers={"Authorization": f"Bearer {TOKEN}"}), 200)
+        finally:
+            guarded.shutdown()
+            guarded.server_close()
+
     def test_a_server_without_a_list_has_no_todo_path(self):
         bare = make_server("127.0.0.1", 0, Notifier(lambda *a: None, Clock()))
         serve_in_thread(bare)
@@ -225,8 +303,8 @@ class HttpTests(Served):
 
 
 class CliTests(Served):
-    def cli(self, *args, url=None):
-        env = {**os.environ, "PET_NOTIFY_URL": url or self.url + "/event", "PET_NOTIFY_TOKEN": ""}
+    def cli(self, *args, url=None, token=""):
+        env = {**os.environ, "PET_NOTIFY_URL": url or self.url + "/event", "PET_NOTIFY_TOKEN": token}
         env.pop("PET_TODO_BY", None)
         done = subprocess.run([sys.executable, str(BRIDGE / "todo.py"), *args], capture_output=True, text=True,
                               env=env, timeout=20)
@@ -243,6 +321,62 @@ class CliTests(Served):
         self.assertEqual(self.cli("undo", "1")[0], 0)
         self.assertEqual(self.cli("rm", "2")[0], 0)
         self.assertEqual([i["id"] for i in self.todo.summary()["items"]], [1])
+
+    def test_options_work_after_the_subcommand(self):
+        code, out = self.cli("add", "x", "--timeout", "3", "--url", self.url + "/event", url="http://127.0.0.1:9/event")
+        self.assertEqual(code, 0, out)
+
+    def test_the_configured_token_goes_only_to_its_own_address(self):
+        seen = []
+
+        class Echo(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.headers.get("Authorization"))
+                body = b'{"v":1,"open":0,"count":0,"items":[]}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+        echo = HTTPServer(("127.0.0.1", 0), Echo)
+        threading.Thread(target=echo.serve_forever, daemon=True).start()
+        other = f"http://127.0.0.1:{echo.server_address[1]}/event"
+        try:
+            self.assertEqual(self.cli("list", url=other, token=TOKEN)[0], 0)
+            code, out = self.cli("list", "--url", other, url=self.url + "/event", token=TOKEN)
+            self.assertIn("not sending the configured token", out)
+            self.assertEqual(self.cli("list", "--url", other, "--token", "u" * 40, url=self.url + "/event",
+                                      token=TOKEN)[0], 0)
+        finally:
+            echo.shutdown()
+            echo.server_close()
+        self.assertEqual(seen, [f"Bearer {TOKEN}", None, "Bearer " + "u" * 40])
+
+    def test_a_reply_that_makes_no_sense_is_exit_1_not_a_traceback(self):
+        for body, status in ((b'[1]', 200), (b'{"ok":true}', 200), (b'{"error":5}', 400), (b"<html>", 500)):
+            class Odd(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                    self.send_response(status)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                do_POST = do_GET
+
+                def log_message(self, *a):
+                    pass
+            odd = HTTPServer(("127.0.0.1", 0), Odd)
+            threading.Thread(target=odd.serve_forever, daemon=True).start()
+            try:
+                for args in (("list",), ("done", "1")):
+                    code, out = self.cli(*args, url=f"http://127.0.0.1:{odd.server_address[1]}/event")
+                    self.assertEqual(code, 1, (body, args, out))
+                    self.assertNotIn("Traceback", out)
+            finally:
+                odd.shutdown()
+                odd.server_close()
 
     def test_list_hides_old_done_items_without_all(self):
         for i in range(8):

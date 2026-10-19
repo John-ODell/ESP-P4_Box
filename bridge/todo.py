@@ -39,26 +39,29 @@ def line(item: dict) -> str:
 
 
 def main() -> int:
+    url, token = pethook.target()
+    common = argparse.ArgumentParser(add_help=False)   # on every subcommand, so they can go after it
+    common.add_argument("--url", default=url, help="the bridge's /event address; /todo is derived from it")
+    common.add_argument("--token", default=token, help="bearer token for the tailnet endpoint")
+    common.add_argument("--timeout", type=float, default=5.0)
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    add = sub.add_parser("add", help="add an item")
+    add = sub.add_parser("add", help="add an item", parents=[common])
     add.add_argument("text", help="one line, 80 characters")
     add.add_argument("--ref", help="the issue or PR it is about: 85, #85 or owner/repo#85")
     add.add_argument("--by", default=os.environ.get("PET_TODO_BY") or "john", help="who added it (default john)")
-    ls = sub.add_parser("list", help="show the list")
+    ls = sub.add_parser("list", help="show the list", parents=[common])
     ls.add_argument("--all", action="store_true", help="every done item too")
     for name, what in (("done", "tick an item"), ("undo", "untick an item"), ("rm", "remove an item")):
-        p = sub.add_parser(name, help=what)
+        p = sub.add_parser(name, help=what, parents=[common])
         p.add_argument("id", type=int)
-    url, token = pethook.target()
-    ap.add_argument("--url", default=url, help="the bridge's /event address; /todo is derived from it")
-    ap.add_argument("--token", default=token, help="bearer token for the tailnet endpoint")
-    ap.add_argument("--timeout", type=float, default=5.0)
     a = ap.parse_args()
 
     headers = {"Content-Type": "application/json"}
     if a.token and (a.url == url or a.token != token):  # never send the configured token to a different --url
         headers["Authorization"] = f"Bearer {a.token}"
+    elif a.token:
+        print(f"todo: not sending the configured token to {a.url}; pass --token for that address", file=sys.stderr)
     if a.cmd == "list":
         body = None
     elif a.cmd == "add":
@@ -73,23 +76,32 @@ def main() -> int:
     except urllib.error.HTTPError as exc:
         try:
             said = json.loads(exc.read()).get("error")
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, OSError):
             said = None
+        said = said if isinstance(said, str) else None
         if exc.code == 404 and not said or said and said.startswith("unknown path"):
             said = "this bridge has no to-do list yet (restart it on a version with #89)"
+        elif exc.code == 401:
+            said = f"{said or exc.reason}: this address needs the tailnet token (--token or PET_NOTIFY_TOKEN)"
         print(f"todo: the bridge said no ({exc.code}): {said or exc.reason}", file=sys.stderr)
         return 1
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as exc:
         print(f"todo: bridge not reachable at {todo_url(a.url)}: {exc}", file=sys.stderr)
         return 1
 
-    if a.cmd != "list":
-        verb = {"add": "added", "done": "ticked", "undo": "opened again", "rm": "removed"}[a.cmd]
-        print(f"{verb}: {line(reply['item'])}")
-        return 0
-    items = reply.get("items", [])
-    open_ = [it for it in items if not it["done"]]
-    done = [it for it in items if it["done"]]
+    try:
+        if a.cmd != "list":
+            verb = {"add": "added", "done": "ticked", "undo": "opened again", "rm": "removed"}[a.cmd]
+            print(f"{verb}: {line(reply['item'])}")
+            return 0
+        items = reply["items"]
+        open_ = [it for it in items if not it["done"]]
+        done = [it for it in items if it["done"]]
+        for it in items:
+            line(it)
+    except (KeyError, TypeError, ValueError):
+        print(f"todo: the bridge's reply did not make sense: {json.dumps(reply)[:200]}", file=sys.stderr)
+        return 1
     shown = done if a.all else done[:SHOW_DONE]
     for it in open_ + shown:
         print(line(it))

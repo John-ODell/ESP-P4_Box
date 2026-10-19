@@ -230,7 +230,7 @@ mistake stays quiet.
 
 A short list the box will show and tick (#89; the screen is #90). The bridge keeps it in `var/todo.json`, so it
 survives a restart, and publishes it retained on `pet/todo`: open items oldest first, then the most recently done, at
-most 12. You and AI sessions change it with `todo.py`, which uses the same address and token as `notify.py`:
+most 12 and at most 3500 bytes, so it always fits the box's 4 KB MQTT buffer. You and AI sessions change it with `todo.py`, which uses the same address and token as `notify.py`:
 
 ```bash
 python3 todo.py add "Flash the list screen" --ref 90 --by claude

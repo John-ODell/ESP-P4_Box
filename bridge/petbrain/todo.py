@@ -4,7 +4,8 @@ An item is {"id": 3, "text": "Flash the box", "done": false, "by": "claude", "re
 "done_ts": null, "done_by": null}. `ref` names an issue or PR ("#85" or "owner/repo#85") for #91 to follow.
 
     pet/todo        bridge -> box, retained: {"v": 1, "open": 4, "count": 9, "items": [{id, text, done, by, ref}]}
-                    open items first (oldest first), then the most recently done, at most SHOWN
+                    open items first (oldest first), then the most recently done, at most SHOWN and at most
+                    BUDGET bytes (the box drops an MQTT message bigger than its 4 KB buffer)
     pet/todo/tick   box -> bridge, never retained: {"id": 3, "done": true}
     POST /todo      {"op": "add", "text": ..., "by"?: ..., "ref"?: ...} or {"op": "done" | "undo" | "remove", "id": 3}
                     -> 200 {"ok": true, "item": {...}} or 400 {"ok": false, "error": "..."}
@@ -19,7 +20,7 @@ import json
 import logging
 import re
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -31,7 +32,12 @@ MAX_TEXT = 80
 MAX_BY = 32
 MAX_ITEMS = 50    # kept; past this the oldest done items go, and an add is refused if all 50 are open
 SHOWN = 12        # sent to the box: about 2 KB
-REF = re.compile(r"^(?:(?:PR|issue)\s*)?(?:([\w.-]+/[\w.-]+))?#?(\d{1,7})$", re.IGNORECASE)
+BUDGET = 3500     # bytes of pet/todo at most: the box's buffer is 4096, topic and header included
+# "#85", "85", "PR 85", or "owner/repo#85" with GitHub's own limits on the names (39 and 100 characters)
+REF = re.compile(r"^(?:(?:PR|issue)\s*)?(?:([A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100})#|#?)(\d{1,7})$",
+                 re.IGNORECASE | re.ASCII)
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 log = logging.getLogger("bridge.todo")
 
 Publish = Callable[[str, str, bool], None]  # topic, payload, retain
@@ -52,9 +58,26 @@ def parse_ref(raw) -> str | None:
 
 
 def _text(raw, limit: int, what: str) -> str:
-    if not isinstance(raw, str) or not clean(raw, limit):
+    """One line of printable ASCII (no control characters, which the box cannot draw and JSON sends as 6-byte
+    escapes), cut at a word to fit."""
+    text = clean(CONTROL.sub(" ", raw), limit) if isinstance(raw, str) else ""
+    if not text:
         raise TodoError(f"{what} must be some text")
-    return clean(raw, limit)
+    return text
+
+
+def _when(item: dict) -> datetime:
+    """When an item was ticked, for ordering: the stored time has its UTC offset, so the hour the clocks go back
+    sorts right. Anything unreadable sorts as oldest."""
+    try:
+        when = datetime.fromisoformat(item["done_ts"])
+        return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return EPOCH
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 class Todo:
@@ -80,15 +103,29 @@ class Todo:
         if not isinstance(items, list):
             log.warning('to-do list in %s is not {"items": [...]}; starting empty', self._store)
             return
+        # A hand-edited file must never stop the bridge: every field is checked, and what does not fit is dropped.
         for it in items:
             try:
-                self._items.append({"id": int(it["id"]), "text": _text(it["text"], MAX_TEXT, "text"),
-                                    "done": bool(it.get("done")), "by": _text(it.get("by") or "?", MAX_BY, "by"),
-                                    "ref": parse_ref(it.get("ref")), "ts": str(it.get("ts", "")),
-                                    "done_ts": it.get("done_ts"), "done_by": it.get("done_by")})
-            except (KeyError, TypeError, ValueError):
+                if not _is_int(it["id"]) or it["id"] < 1 or any(k["id"] == it["id"] for k in self._items):
+                    raise ValueError("id")
+                try:
+                    ref = parse_ref(it.get("ref"))
+                except TodoError:
+                    log.warning("to-do list in %s: item %d's ref %r not kept", self._store, it["id"], it.get("ref"))
+                    ref = None
+                done = it.get("done") is True
+                self._items.append({"id": it["id"], "text": _text(it["text"], MAX_TEXT, "text"), "done": done,
+                                    "by": _text(it.get("by") or "?", MAX_BY, "by"), "ref": ref,
+                                    "ts": str(it.get("ts", "")),
+                                    "done_ts": it.get("done_ts") if done and isinstance(it.get("done_ts"), str) else None,
+                                    "done_by": it.get("done_by") if done and isinstance(it.get("done_by"), str) else None})
+            except (KeyError, TypeError, ValueError, AttributeError):
                 log.warning("to-do list in %s: an entry not kept: %r", self._store, it)
-        self._next = max([int(raw.get("next", 1))] + [it["id"] + 1 for it in self._items])
+        while len(self._items) > MAX_ITEMS:   # the oldest done item first, else the oldest item
+            done = [it for it in self._items if it["done"]]
+            self._items.remove(min(done, key=_when) if done else self._items[0])
+        stored = raw.get("next")
+        self._next = max([stored if _is_int(stored) else 1] + [it["id"] + 1 for it in self._items])
         log.info("to-do list restored from %s: %d items, %d open", self._store, len(self._items),
                  sum(not it["done"] for it in self._items))
 
@@ -106,7 +143,7 @@ class Todo:
     def _ordered(self) -> list[dict]:
         """Open items oldest first, then done items most recently done first."""
         open_ = [it for it in self._items if not it["done"]]
-        done = sorted((it for it in self._items if it["done"]), key=lambda it: it["done_ts"] or "", reverse=True)
+        done = sorted((it for it in self._items if it["done"]), key=_when, reverse=True)
         return open_ + done
 
     def _summary(self, cap: int | None) -> dict:
@@ -114,10 +151,19 @@ class Todo:
         return {"v": 1, "open": sum(not it["done"] for it in self._items), "count": len(self._items),
                 "items": [{k: it[k] for k in ("id", "text", "done", "by", "ref")} for it in items]}
 
+    def _for_box(self) -> str:
+        """pet/todo: SHOWN items, fewer if that is over BUDGET bytes (only with long refs and texts full of quotes)."""
+        summary = self._summary(SHOWN)
+        while True:
+            payload = json.dumps(summary, separators=(",", ":"))
+            if len(payload) <= BUDGET or not summary["items"]:
+                return payload
+            summary["items"].pop()
+
     def _changed(self) -> None:
         """Under the lock: save, then publish what the box shows."""
         self._save()
-        self._publish(TOPIC_TODO, json.dumps(self._summary(SHOWN), separators=(",", ":")), True)
+        self._publish(TOPIC_TODO, self._for_box(), True)
 
     def _find(self, item_id) -> dict:
         if not isinstance(item_id, int) or isinstance(item_id, bool):
@@ -136,7 +182,7 @@ class Todo:
                 done = [it for it in self._items if it["done"]]
                 if not done:
                     raise TodoError(f"the list holds {MAX_ITEMS} open items; tick or remove some first")
-                self._items.remove(min(done, key=lambda it: it["done_ts"] or ""))
+                self._items.remove(min(done, key=_when))
             self._next += 1
             self._items.append(item)
             self._changed()
@@ -145,11 +191,12 @@ class Todo:
             return dict(item)
 
     def set_done(self, item_id, done: bool, by="john") -> dict:
+        by = _text(by, MAX_BY, "by")
         with self._lock:
             item = self._find(item_id)
             if item["done"] != done:
                 item.update(done=done, done_ts=self._now().isoformat() if done else None,
-                            done_by=_text(by, MAX_BY, "by") if done else None)
+                            done_by=by if done else None)
                 self._changed()
                 log.info("to-do %d %s by %s", item["id"], "done" if done else "open again", by)
             return dict(item)

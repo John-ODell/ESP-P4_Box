@@ -9,8 +9,9 @@ only. Broker settings come from bridge/.env; run it with the bridge's venv so pa
     bridge/.venv/bin/python tools/screenshot.py shots/menu.png   # a name of your own
     bridge/.venv/bin/python tools/screenshot.py --scale 2        # 1440x1440, each pixel doubled
 
-Works the same on macOS, Windows and Linux. Exit code 0 when the PNG is written, 1 otherwise (the box reported an
-error, timeout, broker refused, stopped with Ctrl-C).
+Only the standard library and paho-mqtt, so it should run the same on Windows and Linux (tried on macOS). Exit code
+0 when the PNG is written, 1 when the box reported an error, nothing came back, the broker refused or Ctrl-C; 2 for
+bad arguments.
 """
 from __future__ import annotations
 
@@ -40,7 +41,7 @@ except ImportError:
 TOPIC_CMD = "pet/cmd"
 MAX_BYTES = 4 * 1024 * 1024   # a 720x720 RGB565 screen is about 1 MB
 
-# 5- and 6-bit channels widened to 8 bits, rounded the way LVGL does it.
+# 5- and 6-bit channels widened to 8 bits, rounded to the nearest value (LVGL may differ by 1 here and there).
 R5 = bytes((v * 527 + 23) >> 6 for v in range(32))
 G6 = bytes((v * 259 + 33) >> 6 for v in range(64))
 
@@ -97,6 +98,9 @@ class Upload(http.server.BaseHTTPRequestHandler):
             body = self.rfile.read(length)
             error = self.headers.get("X-Error")
             if not error:
+                missing = [k for k in ("X-Width", "X-Height", "X-Stride") if self.headers.get(k) is None]
+                if missing:
+                    raise ValueError(f"no {', '.join(missing)} header")
                 w, h, stride = (int(self.headers[k]) for k in ("X-Width", "X-Height", "X-Stride"))
                 if self.headers.get("X-Format") != "RGB565" or w <= 0 or h <= 0 or stride < 2 * w or \
                         len(body) < stride * (h - 1) + 2 * w:
@@ -105,7 +109,7 @@ class Upload(http.server.BaseHTTPRequestHandler):
                 Upload.result.update(width=w, height=h, rows=rgb565_to_rgb(body, w, h, stride))
             else:
                 Upload.result["error"] = error
-        except (KeyError, ValueError) as e:
+        except (KeyError, TypeError, ValueError) as e:
             Upload.result["error"] = f"bad upload: {e}"
         self.send_response(200)
         self.send_header("Content-Length", "0")
@@ -131,7 +135,11 @@ def main() -> int:
     port = int(os.environ.get("MQTT_PORT", "1883"))
     ip = a.ip or lan_ip(host)
     url = f"http://{ip}:{a.port}/shot"
-    server = http.server.ThreadingHTTPServer((ip, a.port), Upload)
+    try:
+        server = http.server.ThreadingHTTPServer((ip, a.port), Upload)
+    except OSError as e:
+        print(f"cannot listen on {ip}:{a.port}: {e.strerror} (another screenshot.py running? try --port)")
+        return 1
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"screenshot-{os.getpid()}")

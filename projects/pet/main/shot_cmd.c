@@ -10,10 +10,17 @@
 #include "cJSON.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
+#include "sdkconfig.h"
 #include "shot_cmd.h"
 
+/* IDF reads sdkconfig.defaults only when there is no sdkconfig yet: a checkout that built before snapshots were
+ * turned on would fail below with a confusing implicit declaration. Say what to do instead. */
+#if !CONFIG_LV_USE_SNAPSHOT
+#error "projects/pet/sdkconfig predates CONFIG_LV_USE_SNAPSHOT in sdkconfig.defaults: delete it and build again"
+#endif
+
 #define SHOT_URL_MAX     200
-#define SHOT_TASK_STACK  6144
+#define SHOT_TASK_STACK  8192           /* the snapshot walks the whole screen, as the LVGL task does with 8 KB */
 #define SHOT_HTTP_TIMEOUT_MS 15000
 #define SHOT_CHUNK       (16 * 1024)   /* bytes per HTTP write */
 
@@ -26,7 +33,7 @@ static void upload(const char *url, const lv_draw_buf_t *buf, const char *error)
     esp_http_client_config_t cfg = {.url = url, .method = HTTP_METHOD_POST, .timeout_ms = SHOT_HTTP_TIMEOUT_MS};
     esp_http_client_handle_t h = esp_http_client_init(&cfg);
     if (!h) {
-        ESP_LOGW(TAG, "no memory for the HTTP client");
+        ESP_LOGW(TAG, "no HTTP client for %s (a url it cannot read, or no memory)", url);
         return;
     }
     size_t len = 0;
@@ -56,7 +63,9 @@ static void upload(const char *url, const lv_draw_buf_t *buf, const char *error)
         }
     }
     int status = 0;
-    if (err == ESP_OK && esp_http_client_fetch_headers(h) >= 0) {
+    if (err == ESP_OK && esp_http_client_fetch_headers(h) < 0) {
+        err = ESP_ERR_HTTP_FETCH_HEADER;
+    } else if (err == ESP_OK) {
         status = esp_http_client_get_status_code(h);
     }
     if (err != ESP_OK || status != 200) {
@@ -94,6 +103,7 @@ static void shot_task(void *arg)
     if (buf) {
         lv_draw_buf_destroy(buf);
     }
+    ESP_LOGI(TAG, "stack left: %u of %u bytes", (unsigned)uxTaskGetStackHighWaterMark(NULL), SHOT_TASK_STACK);
     free(url);
     s_busy = false;
     vTaskDelete(NULL);

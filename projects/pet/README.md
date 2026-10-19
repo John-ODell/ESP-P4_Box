@@ -162,7 +162,9 @@ as a PNG. The tool listens on port 8072 and sends `{"shot": "http://<mac>:8072/s
 (`main/shot_cmd.c`) renders its screen again with LVGL's snapshot into PSRAM (720x720 RGB565, about 1 MB) and POSTs the
 pixels back, which takes about 2 s. Nothing appears on screen, so the picture holds only what the pet draws. A box that
 cannot take the shot says why in an `X-Error` header and the tool exits 1; no answer within 20 s is a timeout. `--scale`
-repeats each pixel so the art stays sharp when it is shown larger.
+repeats each pixel so the art stays sharp when it is shown larger. First build after this change in an existing
+checkout: delete `projects/pet/sdkconfig` so `CONFIG_LV_USE_SNAPSHOT` from `sdkconfig.defaults` applies; the build stops
+with a message if you forget.
 
 Console is UART0 at 115200. Layout:
 

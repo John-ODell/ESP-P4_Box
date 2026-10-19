@@ -93,6 +93,8 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/ack` | box, when a tap acknowledges a session (milestone 6) | no | `{source, session}` or `{all: true}` |
 | `pet/q20` | box, during a 20 Questions game (#78) | no | `{game, op: start}`, `{game, op: answer, n, a}` or `{game, op: quit}` |
 | `pet/q20/ask` | bridge, the model's next turn | no | `{game, n, q}`, `{game, n, guess}` or `{game, error}` |
+| `pet/todo` | bridge, on start and after every change to the to-do list (#89) | yes | `{v, open, count, items: [{id, text, done, by, ref}]}` |
+| `pet/todo/tick` | box, when a tap ticks or unticks an item | no | `{id, done}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
 it renders the numbers but does not re-run the celebrations in `events`. Updates over the LAN (#16) add two more
@@ -223,6 +225,23 @@ takes longer than `PET_Q20_TIMEOUT` seconds (default 40), fails or gives an unre
 short message on the box. A game cannot start while another game's turn is with the model (it gets "busy"), but a game
 already running is never refused. Only the bridge that holds the notify endpoint answers, so a second bridge started by
 mistake stays quiet.
+
+## To-do list
+
+A short list the box will show and tick (#89; the screen is #90). The bridge keeps it in `var/todo.json`, so it
+survives a restart, and publishes it retained on `pet/todo`: open items oldest first, then the most recently done, at
+most 12 and at most 3500 bytes, so it always fits the box's 4 KB MQTT buffer. You and AI sessions change it with `todo.py`, which uses the same address and token as `notify.py`:
+
+```bash
+python3 todo.py add "Flash the list screen" --ref 90 --by claude
+python3 todo.py list            # open items, then the last five done; --all for every one
+python3 todo.py done 3          # undo 3 opens it again, rm 3 removes it
+```
+
+An item is one line of up to 80 characters, plain ASCII the box can draw. `--ref` names the issue or PR it is about
+(`85`, `#85` or `owner/repo#85`), for the box to check later (#91). The bridge keeps 50 items: past that the oldest done
+item goes, and an add is refused while all 50 are open. Underneath it is `POST /todo` on the session endpoint with
+`{"op": "add", "text", "by", "ref"}` or `{"op": "done" | "undo" | "remove", "id"}`, and `GET /todo` for the whole list.
 
 ## Known limits
 

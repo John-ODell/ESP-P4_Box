@@ -4,6 +4,7 @@
                     or 400 {"ok": false, "error": "..."}; 404 for any other path, 413 over MAX_BODY bytes,
                     403 for a request that carries a browser Origin header
     GET  /pending   the current pending list, the same object that is retained on pet/notify
+    POST /todo      a change to the to-do list, GET /todo the whole list (petbrain/todo.py), on a server made with one
 
 A server made with a `token` (the tailnet listener, petbrain/tailnet.py) also answers 403 to a source address
 outside `allow` and 401 to a request without `Authorization: Bearer <token>`, before anything else is read.
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Callable
 
 from .events import MAX_BODY, EventError, Pending, parse_event
+from .todo import Todo, TodoError
 
 TOPIC_EVENT = "pet/event"
 TOPIC_NOTIFY = "pet/notify"
@@ -120,9 +122,14 @@ class Notifier:
 
 
 def make_server(host: str, port: int, notifier: Notifier, token: str | None = None,
-                allow: tuple = ()) -> ThreadingHTTPServer:
+                allow: tuple = (), todo: Todo | None = None) -> ThreadingHTTPServer:
     """Bind the endpoint (port 0 picks a free port, for tests). Serve it with serve_in_thread(). With `token`, every
-    request must come from an address in `allow` (ip_network objects) and carry that bearer token."""
+    request must come from an address in `allow` (ip_network objects) and carry that bearer token. With `todo`, it
+    also serves /todo."""
+    posts = {"/event": (notifier.post, EventError, "event")}
+    if todo is not None:
+        posts["/todo"] = (todo.post, TodoError, "to-do change")
+    paths = " or ".join(posts)
     expected = f"Bearer {token}".encode() if token else None
 
     class Handler(BaseHTTPRequestHandler):
@@ -166,26 +173,27 @@ def make_server(host: str, port: int, notifier: Notifier, token: str | None = No
                             self.headers.get("Origin"))  # %r: a folded header cannot add a log line
                 self._send(403, {"ok": False, "error": "browser requests are not accepted"})
                 return
-            if self.path != "/event":
-                self._send(404, {"ok": False, "error": "unknown path, POST /event"})
+            if self.path not in posts:
+                self._send(404, {"ok": False, "error": f"unknown path, POST {paths}"})
                 return
+            handle, refused, what = posts[self.path]
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:
                 self._send(411, {"ok": False, "error": "Content-Length required"})
                 return
             if length < 0 or length > MAX_BODY:
-                log.warning("rejected event from %s: body of %s bytes", self.client_address[0], length)
+                log.warning("rejected %s from %s: body of %s bytes", what, self.client_address[0], length)
                 self._send(413, {"ok": False, "error": f"body must be 0 to {MAX_BODY} bytes"})
                 return
             body = self.rfile.read(length)
             try:
-                self._send(200, notifier.post(body))
-            except EventError as exc:
-                log.warning("rejected event from %s: %s", self.client_address[0], exc)
+                self._send(200, handle(body))
+            except refused as exc:
+                log.warning("rejected %s from %s: %s", what, self.client_address[0], exc)
                 self._send(400, {"ok": False, "error": str(exc)})
             except Exception:  # a broker hiccup must not take the endpoint down
-                log.exception("event from %s not handled", self.client_address[0])
+                log.exception("%s from %s not handled", what, self.client_address[0])
                 self._send(500, {"ok": False, "error": "bridge error, see its log"})
 
         def do_GET(self) -> None:
@@ -193,8 +201,10 @@ def make_server(host: str, port: int, notifier: Notifier, token: str | None = No
                 return
             if self.path == "/pending":
                 self._send(200, notifier.pending())
+            elif self.path == "/todo" and todo is not None:
+                self._send(200, todo.summary())
             else:
-                self._send(404, {"ok": False, "error": "unknown path, GET /pending"})
+                self._send(404, {"ok": False, "error": "unknown path, GET /pending" + (" or /todo" if todo else "")})
 
         def log_message(self, fmt, *args) -> None:  # the default writes every request to stderr
             log.debug("http %s " + fmt, self.client_address[0], *args)

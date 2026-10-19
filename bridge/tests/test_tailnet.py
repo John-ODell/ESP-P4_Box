@@ -100,17 +100,18 @@ class StartTests(unittest.TestCase):
         answers = iter([None, "100.79.52.11"])
         made, servers = [], []
 
-        def make(host, port, notifier, token=None, allow=()):
-            made.append((host, token, allow))
+        def make(host, port, notifier, token=None, allow=(), todo=None):
+            made.append((host, token, allow, todo))
             servers.append(make_server("127.0.0.1", 0, notifier, token=token, allow=allow))
             return servers[-1]
         with self.assertLogs("bridge.tailnet", "INFO"):
-            thread = tailnet.start(self.CFG, n, detect=lambda: next(answers), sleep=lambda s: None, make=make)
+            thread = tailnet.start(self.CFG, n, detect=lambda: next(answers), sleep=lambda s: None, make=make,
+                                   todo="the list")
             thread.join(5)
         for server in servers:
             server.shutdown()
             server.server_close()
-        self.assertEqual(made, [("100.79.52.11", TOKEN, tailnet.TAILNET)])
+        self.assertEqual(made, [("100.79.52.11", TOKEN, tailnet.TAILNET, "the list")])
 
     def test_detect_ip_reads_the_cli_and_ignores_anything_else(self):
         class Out:

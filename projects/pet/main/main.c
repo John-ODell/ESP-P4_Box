@@ -18,6 +18,7 @@
 #include "menu.h"
 #include "q20.h"
 #include "says.h"
+#include "shot_cmd.h"
 #include "pet_pack.h"
 #include "play.h"
 #include "net.h"
@@ -292,7 +293,7 @@ static void on_cmd(const char *payload, size_t len, bool retained)
         ESP_LOGW(TAG, "cmd: retained message ignored: %.*s", (int)len, payload);
         return;
     }
-    if (!ota_handle_cmd(payload, len) && !pack_handle_cmd(payload, len)) {
+    if (!ota_handle_cmd(payload, len) && !pack_handle_cmd(payload, len) && !shot_handle_cmd(payload, len)) {
         ESP_LOGW(TAG, "cmd: not understood: %.*s", (int)len, payload);
     }
 }

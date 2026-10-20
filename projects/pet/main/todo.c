@@ -40,6 +40,7 @@ static bool s_have;        /* a pet/todo has arrived since boot */
 static bool s_is_open;
 static bool s_swiped;      /* this press became a swipe: LVGL still sends CLICKED to the row it started on */
 static const char *s_note; /* a one-off line in the header, until the next redraw */
+static uint32_t s_opened_ms;   /* lv_tick when the list opened */
 
 static void draw_row(int i)
 {
@@ -137,6 +138,10 @@ static void gesture_cb(lv_event_t *e)
     (void)e;
     s_swiped = true;
     lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_active());
+    if (lv_tick_elaps(s_opened_ms) < PET_SWIPE_COOLDOWN_MS) {
+        /* The swipe that opened the list: once the list is under the finger, LVGL reports it again, to the list */
+        return;
+    }
     if (d == LV_DIR_LEFT || d == LV_DIR_RIGHT) {
         close_list("swipe");
     }
@@ -318,6 +323,7 @@ void todo_open(void)
     ESP_LOGI(TAG, "open: %d open, %d held", s_open, s_n);
     s_is_open = true;
     s_swiped = true;   /* the swipe that opened the list is still under the finger: its release clicks nothing */
+    s_opened_ms = lv_tick_get();
     draw();
     lv_obj_scroll_to_y(s_list, 0, LV_ANIM_OFF);
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_HIDDEN);

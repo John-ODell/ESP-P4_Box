@@ -95,7 +95,8 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/q20/ask` | bridge, the model's next turn | no | `{game, n, q}`, `{game, n, guess}` or `{game, error}` |
 | `pet/todo` | bridge, on start and after every change to the to-do list (#89) | yes | `{v, open, count, items: [{id, text, done, by, ref, flag?}]}` |
 | `pet/todo/tick` | box, when a tap ticks or unticks an item | no | `{id, done}` |
-| `pet/feed` | bridge, every poll when it changed (#92) | yes | `{v, items: [{t, k, r, x}]}` |
+| `pet/feed` | bridge, every poll when it changed (#92) | yes | `{v, items: [{t, k, r, x, n?}]}` |
+| `pet/feed/add` | box, when a tap puts an open PR or issue on the to-do list (#104) | no | `{r, n}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
 it renders the numbers but does not re-run the celebrations in `events`. Updates over the LAN (#16) add two more
@@ -266,7 +267,14 @@ commits on default branches, so a squash merge counts once. The days are GitHub'
 midnight Pacific, and 3 days back can reach into a fourth. `t` is when it happened in Unix time (for commits, the start
 of GitHub's day; today's sort as of now, so they stay near the top), `r` the repo without its owner
 and `x` the text, one line of ASCII. At most 10 lines and 3000 bytes, published retained only when it changed. If
-GitHub cannot be reached the log says "feed not updated" and the box keeps the last one.
+GitHub cannot be reached the log says "feed not updated" and the box keeps the last one. PR and issue lines also carry
+`n`, their number.
+
+A tap on an open PR or issue on the box sends `{"r": "flasheide", "n": 74}` on `pet/feed/add` (#104). The bridge finds
+that line in its last feed and adds a to-do with GitHub's title, by "box", and the full `owner/repo#74` ref, so it
+follows GitHub like any other ref. If an open item already has that ref (a plain `#74` counts when it means the same
+repo), nothing is added and the list is published again, so the box can say it is there. A line the bridge no longer
+has, a closed one, or a malformed message is logged and dropped.
 
 ## Known limits
 

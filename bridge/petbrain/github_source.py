@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import urllib.error
 import urllib.request
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -88,6 +89,24 @@ def find_token() -> str:
     except (OSError, subprocess.SubprocessError):
         pass
     raise RuntimeError("no GitHub token: set GITHUB_TOKEN in bridge/.env or log in with `gh auth login`")
+
+
+def rest(token: str, path: str) -> dict:
+    """GET https://api.github.com/<path> (path with its query string, already encoded) as JSON. An HTTP error raises."""
+    req = urllib.request.Request(f"https://api.github.com/{path}", headers={
+        "Authorization": f"bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "esp-p4-pet-bridge",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:   # GitHub says why (a rate limit, a bad query): keep that for the log
+        try:
+            why = json.loads(exc.read()).get("message", "")
+        except (ValueError, AttributeError):
+            why = ""
+        raise RuntimeError(f"GitHub {exc.code} on {path.split('?')[0]}: {why or exc.reason}") from None
 
 
 def graphql(token: str, query: str, variables: dict | None = None, partial: bool = False) -> dict:

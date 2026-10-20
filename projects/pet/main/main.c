@@ -19,6 +19,7 @@
 #include "menu.h"
 #include "q20.h"
 #include "feed.h"
+#include "radar.h"
 #include "todo.h"
 #include "says.h"
 #include "shot_cmd.h"
@@ -434,10 +435,18 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
         }
     } else if (strcmp(topic, PET_TOPIC_MERGED) == 0 && !retained) {   /* PRs just merged: the pet cheers (#106) */
         on_merged(payload, len);
+    } else if (strcmp(topic, PET_TOPIC_RADAR) == 0) {   /* the Radar tab of the list (#105) */
+        if (bsp_display_lock(500)) {
+            radar_on_msg(payload, len);
+            todo_tab_changed();
+            bsp_display_unlock();
+        } else {
+            ESP_LOGW(TAG, "could not take the display lock; radar not drawn");
+        }
     } else if (strcmp(topic, PET_TOPIC_FEED) == 0) {   /* the Updates tab of the list (#92) */
         if (bsp_display_lock(500)) {
             feed_on_msg(payload, len);
-            todo_feed_changed();
+            todo_tab_changed();
             bsp_display_unlock();
         } else {
             ESP_LOGW(TAG, "could not take the display lock; updates not drawn");

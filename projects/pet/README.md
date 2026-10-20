@@ -62,7 +62,8 @@ box was sent. Drag up and down to scroll. A swipe left or right on the list, Clo
 (`PET_TODO_IDLE_MS`) goes back to the pet. Items are added on the Mac with `python3 bridge/todo.py add`. Like the
 games it takes every touch and keeps the screen bright.
 
-The list screen opens on its **To do** tab; tap **Updates** for the GitHub feed (#92, `main/feed.c`) from the retained
+The list screen's header is a row of tabs (#105): **To do**, **Updates** and **Radar**, the one showing in the accent
+colour and underlined. It always opens on To do; tap **Updates** for the GitHub feed (#92, `main/feed.c`) from the retained
 `pet/feed`: up to 10 rows, newest first, each with what happened in the pack's colours (Merged and Issue done in
 `good`, PR opened and Issue opened in `accent`, Issue dropped in `warn`, PR closed in `dim`, Committed in `ink`), the title,
 and the repo with how long ago ("3h ago"; commits "today", "yesterday", "2d ago"). The ages show once the clock has
@@ -71,6 +72,13 @@ synced. Drag to scroll, and the same swipe, Close or idle timeout goes back to t
 says "Adding #74 to To do...", then "On To do now: #74" when the bridge's next `pet/todo` has it, or "#74 is already on
 To do" (refs compared without case, as GitHub's names are). With no answer in 15 s (the bridge dropped it, or the list
 is cut before the new item) it says "No word from the bridge about #74". Merged, closed and commit rows take no tap.
+
+**Radar** (#105, `main/radar.c`) draws the retained `pet/radar`: the four counts GitHub's profile radar is drawn from
+over the last year, as bars in the order commits, code review, pull requests, issues. Each bar is as long as its share
+of the largest, with the count and its share of all four. The smallest is in the warning colour and the line under the
+bars names it and how far short it is of the largest ("Furthest behind: code review, 426 short of commits."). When the
+smallest is at least 80% of the largest every bar turns `good` and the line says the shape is close to a bullseye. The
+header says which days are counted.
 
 **Merges** (#106): when the bridge's poll finds one of your pull requests just merged (`pet/merged`), the pet plays
 its celebration, the banner just above today's line says "Merged #103!" (or "Merged 3 PRs!"), happiness goes up by `PET_HAPPY_MERGE` (5) for
@@ -204,6 +212,7 @@ Console is UART0 at 115200. Layout:
 - `main/q20.c`: 20 Questions over the face: shows the bridge's turns from `pet/q20/ask`, sends the taps on `pet/q20`.
 - `main/todo.c`: the to-do list over the face: draws `pet/todo`, sends taps on `pet/todo/tick`.
 - `main/feed.c`: the list screen's Updates tab: draws `pet/feed`.
+- `main/radar.c`: the list screen's Radar tab: draws `pet/radar` as four bars.
 - `main/play.c`: happiness and snacks, saved in NVS. Each stroke adds `PET_HAPPY_PET` (3), one less for every
   `PET_PET_FADE` (4) recent strokes, down to nothing; each minute forgets two recent strokes (at most 12 are kept),
   so the gain is back to full after 6 minutes' rest. Pet Says adds happiness with `play_says_done()`.

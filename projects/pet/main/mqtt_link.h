@@ -18,6 +18,7 @@
 #define PET_TOPIC_TODO_TICK "pet/todo/tick" /* box -> bridge, never retained: {"id", "done"} from a tap on the list */
 #define PET_TOPIC_FEED   "pet/feed"     /* bridge -> box, retained: what happened on GitHub lately (#92) */
 #define PET_TOPIC_FEED_ADD "pet/feed/add" /* box -> bridge, never retained: {"r", "n"}, a tap on an open PR or issue */
+#define PET_TOPIC_RADAR  "pet/radar"    /* bridge -> box, retained: the contribution radar's four counts (#105) */
 #define PET_TOPIC_MERGED "pet/merged"   /* bridge -> box, never retained: your PRs just merged, to celebrate (#106) */
 
 /* `payload` is NUL-terminated. `retained` is the broker's retain flag: a replay of old state, not fresh news. */

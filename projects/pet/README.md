@@ -87,7 +87,7 @@ header says "2 failing" (", some still running" when some are), "Nothing failing
 "Nothing failing" when some were cancelled or skipped. Drag to scroll; the rows take no tap.
 
 **Merges** (#106): when the bridge's poll finds one of your pull requests just merged (`pet/merged`), the pet plays
-its celebration, the banner says "Merged #103!" (or "Merged 3 PRs!"), happiness goes up by `PET_HAPPY_MERGE` (5) for
+its celebration, the banner just above today's line says "Merged #103!" (or "Merged 3 PRs!"), happiness goes up by `PET_HAPPY_MERGE` (5) for
 each, three at most, and the screen wakes, except at night. The stats overlay is put away so the banner shows; under
 the list screen or a game only the happiness shows. A level-up waiting for a tap keeps its banner.
 

@@ -3,6 +3,8 @@ import unittest
 from datetime import datetime, timezone
 
 from petbrain.feed import BUDGET, MAX_TEXT, RECENT_DAYS, SHOWN, TOPIC_FEED, Feed, build, fetch_github, payload
+from petbrain.todo import Todo
+from petbrain.todo_refs import resolve
 
 NOW = datetime(2026, 10, 20, 1, 30, tzinfo=timezone.utc)
 T = int(NOW.timestamp())
@@ -14,12 +16,12 @@ def ts(h, m=0, day=20):
 
 def pr(n, title, created, merged=None, closed=None, repo="ESP-P4_Box"):
     return {"number": n, "title": title, "createdAt": created, "mergedAt": merged, "closedAt": closed or merged,
-            "repository": {"name": repo}}
+            "repository": {"name": repo, "owner": {"login": "John-ODell"}}}
 
 
 def issue(n, title, created, closed=None, reason=None, repo="ESP-P4_Box"):
     return {"number": n, "title": title, "createdAt": created, "closedAt": closed, "stateReason": reason,
-            "repository": {"name": repo}}
+            "repository": {"name": repo, "owner": {"login": "John-ODell"}}}
 
 
 def viewer(prs=(), issues=(), commits=()):
@@ -87,6 +89,55 @@ class PayloadTests(unittest.TestCase):
         self.assertLessEqual(len(got), SHOWN)
         self.assertEqual(got[0]["x"], lines[0]["x"])   # the newest kept, the oldest cut
         self.assertEqual(json.loads(payload([])), {"v": 1, "items": []})
+
+    def test_prs_and_issues_send_their_number_but_not_the_ref_or_title(self):
+        lines = build(viewer(prs=[pr(5, "x", ts(1))], commits=[("r", ts(0), 2)]), T)
+        self.assertEqual([l.get("ref") for l in lines], [None, "John-ODell/ESP-P4_Box#5"])   # today's commits first
+        self.assertEqual([sorted(l) for l in json.loads(payload(lines))["items"]],
+                         [["k", "r", "t", "x"], ["k", "n", "r", "t", "x"]])
+
+
+class AddTests(unittest.TestCase):
+    """A tap on an open PR or issue on the box (#104)."""
+    REPO = ("John-ODell", "ESP-P4_Box")
+
+    def setUp(self):
+        self.todo = Todo(lambda *a: None, lambda: NOW)
+        answer = viewer(prs=[pr(73, "Spike results", ts(1)), pr(70, "Merged one", ts(0), merged=ts(1))],
+                        issues=[issue(74, "Run the builder on the Pi", ts(1, 5), repo="flasheide")])
+        self.feed = Feed(lambda *a: None, lambda since: answer, now=lambda: NOW, todo=self.todo,
+                         key=lambda ref: resolve(ref, self.REPO))
+        self.feed.update()
+
+    def test_an_open_issue_goes_on_the_list_with_its_title_and_full_ref(self):
+        item = self.feed.add(b'{"r":"flasheide","n":74}')
+        self.assertEqual((item["text"], item["ref"], item["by"], item["done"]),
+                         ("Run the builder on the Pi", "John-ODell/flasheide#74", "box", False))
+
+    def test_one_already_open_on_the_list_is_not_added_again_even_as_a_plain_ref(self):
+        self.todo.add("Spike", ref="#73")
+        self.assertIsNone(self.feed.add(b'{"r":"ESP-P4_Box","n":73}'))
+        self.assertIsNotNone(self.feed.add(b'{"r":"flasheide","n":74}'))
+        self.assertIsNone(self.feed.add(b'{"r":"flasheide","n":74}'))
+        self.assertEqual(len(self.todo.ref_items()), 2)
+
+    def test_a_done_item_with_the_ref_does_not_stop_a_new_one(self):
+        old = self.todo.add("Spike", ref="#73")
+        self.todo.set_done(old["id"], True)
+        self.assertIsNotNone(self.feed.add(b'{"r":"ESP-P4_Box","n":73}'))
+
+    def test_closed_unknown_and_malformed_taps_add_nothing(self):
+        for raw in (b'{"r":"ESP-P4_Box","n":70}', b'{"r":"ESP-P4_Box","n":99}', b'{"r":"ESP-P4_Box","n":true}',
+                    b'{"r":5,"n":73}', b"[]", b"not json", b'{"n":73}'):
+            with self.assertLogs("bridge.feed", "WARNING"):
+                self.assertIsNone(self.feed.add(raw), raw)
+        self.assertEqual(self.todo.ref_items(), [])
+
+    def test_a_feed_without_a_list_adds_nothing(self):
+        feed = Feed(lambda *a: None, lambda since: viewer(prs=[pr(73, "x", ts(1))]), now=lambda: NOW)
+        feed.update()
+        with self.assertLogs("bridge.feed", "WARNING"):
+            self.assertIsNone(feed.add(b'{"r":"ESP-P4_Box","n":73}'))
 
 
 class FeedTests(unittest.TestCase):

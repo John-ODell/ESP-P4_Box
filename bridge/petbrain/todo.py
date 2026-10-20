@@ -185,20 +185,35 @@ class Todo:
 
     def add(self, text, by="john", ref=None) -> dict:
         with self._lock:
-            item = {"id": self._next, "text": _text(text, MAX_TEXT, "text"), "done": False,
-                    "by": _text(by, MAX_BY, "by"), "ref": parse_ref(ref), "ts": self._now().isoformat(),
-                    "done_ts": None, "done_by": None, "flag": None, "gh": None}
-            if len(self._items) >= MAX_ITEMS:
-                done = [it for it in self._items if it["done"]]
-                if not done:
-                    raise TodoError(f"the list holds {MAX_ITEMS} open items; tick or remove some first")
-                self._items.remove(min(done, key=_when))
-            self._next += 1
-            self._items.append(item)
-            self._changed()
-            log.info("to-do %d added by %s: %s%s", item["id"], item["by"], item["text"],
-                     f" ({item['ref']})" if item["ref"] else "")
-            return dict(item)
+            return self._add(text, by, ref)
+
+    def add_once(self, text, by, ref, key: Callable[[str], object] = lambda ref: ref) -> tuple[dict, bool]:
+        """Add, unless an open item has the same ref (compared by `key`, so "#85" can match "owner/repo#85").
+        Returns the item, new or already there, and whether it was added. A ref `key` gives None for matches nothing."""
+        ref = parse_ref(ref)
+        want = key(ref) if ref else None
+        with self._lock:
+            for it in self._items:
+                if want is not None and not it["done"] and it["ref"] and key(it["ref"]) == want:
+                    return dict(it), False
+            return self._add(text, by, ref), True
+
+    def _add(self, text, by, ref) -> dict:
+        """add, with the lock held."""
+        item = {"id": self._next, "text": _text(text, MAX_TEXT, "text"), "done": False,
+                "by": _text(by, MAX_BY, "by"), "ref": parse_ref(ref), "ts": self._now().isoformat(),
+                "done_ts": None, "done_by": None, "flag": None, "gh": None}
+        if len(self._items) >= MAX_ITEMS:
+            done = [it for it in self._items if it["done"]]
+            if not done:
+                raise TodoError(f"the list holds {MAX_ITEMS} open items; tick or remove some first")
+            self._items.remove(min(done, key=_when))
+        self._next += 1
+        self._items.append(item)
+        self._changed()
+        log.info("to-do %d added by %s: %s%s", item["id"], item["by"], item["text"],
+                 f" ({item['ref']})" if item["ref"] else "")
+        return dict(item)
 
     def set_done(self, item_id, done: bool, by="john") -> dict:
         by = _text(by, MAX_BY, "by")

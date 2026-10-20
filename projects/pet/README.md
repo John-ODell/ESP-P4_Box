@@ -66,7 +66,10 @@ The list screen opens on its **To do** tab; tap **Updates** for the GitHub feed 
 `pet/feed`: up to 10 rows, newest first, each with what happened in the pack's colours (Merged and Issue done in
 `good`, PR opened and Issue opened in `accent`, Issue dropped in `warn`, PR closed in `dim`, Committed in `ink`), the title,
 and the repo with how long ago ("3h ago"; commits "today", "yesterday", "2d ago"). The ages show once the clock has
-synced. The rows are not buttons: drag to scroll, and the same swipe, Close or idle timeout goes back to the pet.
+synced. Drag to scroll, and the same swipe, Close or idle timeout goes back to the pet. An open PR or issue ends in
+"+ To do": tap it and the bridge puts it on the list with its ref (#104), so it ticks itself when it closes. The header
+says "Adding #74 to To do...", then "On To do now: #74" when the bridge's next `pet/todo` has it, or "#74 is already on
+To do". Merged, closed and commit rows take no tap.
 
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a

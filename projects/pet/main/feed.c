@@ -1,7 +1,8 @@
 /* The updater feed (#92). The bridge asks GitHub for your latest pull requests, issues and commit counts each poll and
  * publishes them retained on pet/feed, newest first, at most FEED_MAX lines: one per PR or issue in its latest state,
  * one per repo per day of commits. Here each line is a row: what happened (coloured by kind), the title, and the repo
- * with how long ago. Rows are not buttons: a tap does nothing, a drag scrolls, a sideways swipe closes the list. */
+ * with how long ago. A drag scrolls and a sideways swipe closes the list. An open PR or issue is a button: a tap sends
+ * it on pet/feed/add and the bridge puts it on the to-do list (#104); the list screen (todo.c) handles the tap. */
 #include "feed.h"
 #include <assert.h>
 #include <stdio.h>
@@ -10,6 +11,7 @@
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "mqtt_link.h"
 
 static const char *TAG = "feed";
 
@@ -30,6 +32,7 @@ static const char *const KIND_LABEL[K_COUNT] = {
 typedef struct {
     int64_t t;
     uint8_t kind;
+    int n;   /* the PR or issue number, 0 for commits */
     char repo[REPO_MAX];
     char text[TEXT_MAX];
 } line_t;
@@ -108,10 +111,13 @@ void feed_draw(void)
         lv_label_set_text(text, l->text);
         char when[24];
         age(when, sizeof when, l, now);
-        if (when[0]) {
-            lv_label_set_text_fmt(meta, "%s, %s", l->repo, when);
+        bool tap = feed_key(i) != 0;
+        lv_label_set_text_fmt(meta, "%s%s%s%s", l->repo, when[0] ? ", " : "", when,
+                              tap ? "   " LV_SYMBOL_PLUS " To do" : "");
+        if (tap) {
+            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         } else {
-            lv_label_set_text(meta, l->repo);
+            lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);   /* its touches go to the list, which scrolls */
         }
         lv_obj_remove_flag(row, LV_OBJ_FLAG_HIDDEN);
     }
@@ -121,6 +127,45 @@ void feed_draw(void)
     } else {
         lv_obj_add_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
     }
+}
+
+int feed_key(int i)
+{
+    if (i < 0 || i >= s_n || s_lines[i].n <= 0 ||
+        (s_lines[i].kind != K_PR_OPEN && s_lines[i].kind != K_ISSUE_OPEN)) {
+        return 0;
+    }
+    uint32_t h = 5381;   /* the repo and the number: another repo's #74 is another line */
+    for (const char *c = s_lines[i].repo; *c; c++) {
+        h = h * 33 + (uint8_t)*c;
+    }
+    int key = (int)((h * 31 + (uint32_t)s_lines[i].n) & 0x7fffffff);
+    return key ? key : 1;
+}
+
+bool feed_ref(int i, char *buf, size_t size)
+{
+    if (feed_key(i) == 0) {
+        return false;
+    }
+    snprintf(buf, size, "%s#%d", s_lines[i].repo, s_lines[i].n);
+    return true;
+}
+
+bool feed_add(int i)
+{
+    if (feed_key(i) == 0 || !mqtt_link_connected()) {
+        return false;
+    }
+    cJSON *j = cJSON_CreateObject();
+    cJSON_AddStringToObject(j, "r", s_lines[i].repo);
+    cJSON_AddNumberToObject(j, "n", s_lines[i].n);
+    char *text = cJSON_PrintUnformatted(j);
+    bool sent = text && mqtt_link_publish(PET_TOPIC_FEED_ADD, text, false);
+    ESP_LOGI(TAG, "%s %s", text ? text : "?", sent ? "sent" : "NOT sent");
+    cJSON_free(text);
+    cJSON_Delete(j);
+    return sent;
 }
 
 const char *feed_summary(void)
@@ -142,6 +187,7 @@ void feed_on_msg(const char *payload, size_t len)
     cJSON_ArrayForEach(el, items) {
         const cJSON *t = cJSON_GetObjectItem(el, "t"), *k = cJSON_GetObjectItem(el, "k");
         const cJSON *r = cJSON_GetObjectItem(el, "r"), *x = cJSON_GetObjectItem(el, "x");
+        const cJSON *num = cJSON_GetObjectItem(el, "n");
         if (n >= FEED_MAX || !cJSON_IsString(k) || !cJSON_IsString(x)) {
             continue;
         }
@@ -160,6 +206,10 @@ void feed_on_msg(const char *payload, size_t len)
         l->t = cJSON_IsNumber(t) && t->valuedouble > 0 && t->valuedouble < 4e9 ? (int64_t)t->valuedouble : 0;
         snprintf(l->repo, sizeof l->repo, "%s", cJSON_IsString(r) ? r->valuestring : "");
         snprintf(l->text, sizeof l->text, "%s", x->valuestring);
+        /* only a whole number the bridge can find again; a repo cut to fit would not be found either */
+        l->n = cJSON_IsNumber(num) && num->valuedouble >= 1 && num->valuedouble <= 9999999 &&
+               num->valuedouble == (double)(int)num->valuedouble && cJSON_IsString(r) &&
+               strlen(r->valuestring) < sizeof l->repo ? (int)num->valuedouble : 0;
     }
     s_n = n;
     s_have = true;
@@ -175,7 +225,7 @@ static void style_text(lv_obj_t *l, const lv_font_t *font, lv_color_t color)
     lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
 }
 
-static void make_row(void)
+static lv_obj_t *make_row(void)
 {
     lv_obj_t *row = lv_obj_create(s_box);   /* feed_draw finds the parts by child index */
     lv_obj_remove_style_all(row);
@@ -186,8 +236,9 @@ static void make_row(void)
     lv_obj_set_style_radius(row, 18, 0);
     lv_obj_set_style_bg_color(row, C(panel), 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(row, C(accent), LV_STATE_PRESSED);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   /* touches go to the list: drags scroll */
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   /* feed_draw makes open ones buttons */
 
     lv_obj_t *kind = lv_label_create(row);
     style_text(kind, &lv_font_montserrat_16, C(dim));
@@ -200,9 +251,10 @@ static void make_row(void)
     style_text(meta, &lv_font_montserrat_16, C(dim));
     lv_obj_set_width(meta, LV_PCT(100));
     lv_label_set_long_mode(meta, LV_LABEL_LONG_DOT);
+    return row;
 }
 
-lv_obj_t *feed_create(lv_obj_t *parent, const pet_def_t *pet, lv_event_cb_t press_cb)
+lv_obj_t *feed_create(lv_obj_t *parent, const pet_def_t *pet, lv_event_cb_t press_cb, lv_event_cb_t tap_cb)
 {
     s_pet = pet;
     s_lines = heap_caps_calloc(FEED_MAX, sizeof(line_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -216,7 +268,9 @@ lv_obj_t *feed_create(lv_obj_t *parent, const pet_def_t *pet, lv_event_cb_t pres
     lv_obj_set_scrollbar_mode(s_box, LV_SCROLLBAR_MODE_ACTIVE);
     lv_obj_add_event_cb(s_box, press_cb, LV_EVENT_PRESSED, NULL);
     for (int i = 0; i < FEED_MAX; i++) {
-        make_row();
+        lv_obj_t *row = make_row();
+        lv_obj_add_event_cb(row, press_cb, LV_EVENT_PRESSED, NULL);
+        lv_obj_add_event_cb(row, tap_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
     s_empty = lv_label_create(s_box);
     style_text(s_empty, &lv_font_montserrat_24, C(dim));

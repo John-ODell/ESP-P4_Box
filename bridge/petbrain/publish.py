@@ -12,7 +12,8 @@ the local HTTP endpoint (notify_api.py) and go out on `pet/event` and the retain
 `pet/notify`. 20 Questions games from the box arrive on `pet/q20` and are answered on
 `pet/q20/ask` (q20.py). The to-do list is changed on the same endpoint (POST /todo), shown
 on the retained `pet/todo` and ticked from the box on `pet/todo/tick` (todo.py). The updater feed of
-recent PRs, issues and commits goes out retained on `pet/feed` every poll (feed.py).
+recent PRs, issues and commits goes out retained on `pet/feed` every poll (feed.py), and a tap on an open one on
+the box (`pet/feed/add`) puts it on the to-do list.
 """
 from __future__ import annotations
 
@@ -33,8 +34,8 @@ from .brain import compute_state
 from .github_source import fetch_days, load_dotenv
 from . import q20, tailnet
 from .todo import TOPIC_TICK, Todo
-from .todo_refs import RefChecker, default_repo
-from .feed import Feed
+from .todo_refs import RefChecker, default_repo, resolve
+from .feed import TOPIC_ADD as TOPIC_FEED_ADD, Feed
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -111,11 +112,12 @@ def publish_state(client: mqtt.Client, state: dict) -> None:
              state.get("today", {}).get("total"), state.get("events"))
 
 
-def start_notifier(cfg: dict, client: mqtt.Client) -> tuple[Notifier, RefChecker] | None:
+def start_notifier(cfg: dict, client: mqtt.Client) -> tuple[Notifier, RefChecker, Feed] | None:
     """Session notifications: pet/ack from the box, the local HTTP endpoint, and the pending list that survived the
     last stop (bridge/var/pending.json) published on start. The to-do list (bridge/var/todo.json) rides on the same
     endpoint and is ticked on pet/todo/tick; items with a ref follow GitHub through the RefChecker, which the poll
-    loop runs. None when another bridge already serves the endpoint."""
+    loop runs, as it does the updater feed, whose taps on pet/feed/add add to the same list. None when another bridge
+    already serves the endpoint."""
     def publish(topic: str, payload: str, retain: bool) -> None:
         client.publish(topic, payload, qos=1, retain=retain)
 
@@ -138,7 +140,9 @@ def start_notifier(cfg: dict, client: mqtt.Client) -> tuple[Notifier, RefChecker
     tailnet.start(cfg, notifier, todo=todo)  # only when PET_TAILNET=on and a long token is set; see petbrain/tailnet.py
     repo = default_repo()
     log.info("to-do refs: plain #n means %s", "/".join(repo) if repo else "nothing (set PET_TODO_REPO)")
-    return notifier, RefChecker(todo, repo=repo)
+    feed = Feed(publish, todo=todo, key=lambda ref: resolve(ref, repo))
+    client.message_callback_add(TOPIC_FEED_ADD, lambda c, userdata, msg: feed.add(msg.payload))
+    return notifier, RefChecker(todo, repo=repo), feed
 
 
 def coerce(value: str):
@@ -173,13 +177,12 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = config()
     loop_mode = not (a.once or a.state_file)
-    client = connect(cfg, topics=(TOPIC_ACK, TOPIC_TICK, q20.TOPIC_IN) if loop_mode else ())
+    client = connect(cfg, topics=(TOPIC_ACK, TOPIC_TICK, TOPIC_FEED_ADD, q20.TOPIC_IN) if loop_mode else ())
     refs = feed = None
     if loop_mode:
         started = start_notifier(cfg, client)
         if started is not None:
-            refs = started[1]
-            feed = Feed(lambda topic, payload, retain: client.publish(topic, payload, qos=1, retain=retain))
+            refs, feed = started[1], started[2]
             q20.attach(client)   # like the notifier, left to the bridge already running: two would both answer
 
     if a.state_file:

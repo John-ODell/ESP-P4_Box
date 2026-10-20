@@ -69,7 +69,8 @@ and the repo with how long ago ("3h ago"; commits "today", "yesterday", "2d ago"
 synced. Drag to scroll, and the same swipe, Close or idle timeout goes back to the pet. An open PR or issue ends in
 "+ To do": tap it and the bridge puts it on the list with its ref (#104), so it ticks itself when it closes. The header
 says "Adding #74 to To do...", then "On To do now: #74" when the bridge's next `pet/todo` has it, or "#74 is already on
-To do". Merged, closed and commit rows take no tap.
+To do" (refs compared without case, as GitHub's names are). With no answer in 15 s (the bridge dropped it, or the list
+is cut before the new item) it says "No word from the bridge about #74". Merged, closed and commit rows take no tap.
 
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a

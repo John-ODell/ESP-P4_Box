@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from petbrain.feed import BUDGET, MAX_TEXT, RECENT_DAYS, SHOWN, TOPIC_FEED, Feed, build, fetch_github, payload
 from petbrain.todo import Todo
-from petbrain.todo_refs import resolve
+from petbrain.todo_refs import ref_key
 
 NOW = datetime(2026, 10, 20, 1, 30, tzinfo=timezone.utc)
 T = int(NOW.timestamp())
@@ -106,7 +106,7 @@ class AddTests(unittest.TestCase):
         answer = viewer(prs=[pr(73, "Spike results", ts(1)), pr(70, "Merged one", ts(0), merged=ts(1))],
                         issues=[issue(74, "Run the builder on the Pi", ts(1, 5), repo="flasheide")])
         self.feed = Feed(lambda *a: None, lambda since: answer, now=lambda: NOW, todo=self.todo,
-                         key=lambda ref: resolve(ref, self.REPO))
+                         key=lambda ref: ref_key(ref, self.REPO))
         self.feed.update()
 
     def test_an_open_issue_goes_on_the_list_with_its_title_and_full_ref(self):
@@ -120,6 +120,11 @@ class AddTests(unittest.TestCase):
         self.assertIsNotNone(self.feed.add(b'{"r":"flasheide","n":74}'))
         self.assertIsNone(self.feed.add(b'{"r":"flasheide","n":74}'))
         self.assertEqual(len(self.todo.ref_items()), 2)
+
+    def test_owner_and_repo_names_match_in_any_case(self):
+        self.todo.add("Spike", ref="john-odell/esp-p4_box#73")
+        self.assertIsNone(self.feed.add(b'{"r":"ESP-P4_Box","n":73}'))
+        self.assertEqual(len(self.todo.ref_items()), 1)
 
     def test_a_done_item_with_the_ref_does_not_stop_a_new_one(self):
         old = self.todo.add("Spike", ref="#73")

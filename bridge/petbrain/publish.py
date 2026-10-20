@@ -34,7 +34,7 @@ from .brain import compute_state
 from .github_source import fetch_days, load_dotenv
 from . import q20, tailnet
 from .todo import TOPIC_TICK, Todo
-from .todo_refs import RefChecker, default_repo, resolve
+from .todo_refs import RefChecker, default_repo, ref_key
 from .feed import TOPIC_ADD as TOPIC_FEED_ADD, Feed
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
@@ -140,7 +140,7 @@ def start_notifier(cfg: dict, client: mqtt.Client) -> tuple[Notifier, RefChecker
     tailnet.start(cfg, notifier, todo=todo)  # only when PET_TAILNET=on and a long token is set; see petbrain/tailnet.py
     repo = default_repo()
     log.info("to-do refs: plain #n means %s", "/".join(repo) if repo else "nothing (set PET_TODO_REPO)")
-    feed = Feed(publish, todo=todo, key=lambda ref: resolve(ref, repo))
+    feed = Feed(publish, todo=todo, key=lambda ref: ref_key(ref, repo))
     client.message_callback_add(TOPIC_FEED_ADD, lambda c, userdata, msg: feed.add(msg.payload))
     return notifier, RefChecker(todo, repo=repo), feed
 

@@ -8,7 +8,7 @@ void sched_start(void);                /* TZ, clock label, backlight timer; the 
 void sched_network_up(void);           /* start SNTP once an IP arrives */
 void sched_touch(void);                /* any touch: full brightness, idle timers restart */
 void sched_activity(const char *what); /* something happened (state change, event): same as a touch */
-enum { SCHED_HOLD_FACE = 1, SCHED_HOLD_MENU = 2, SCHED_HOLD_GAME = 4 };
+enum { SCHED_HOLD_FACE = 1, SCHED_HOLD_MENU = 2, SCHED_HOLD_GAME = 4, SCHED_HOLD_LIST = 8 };
 void sched_hold(unsigned why, bool on); /* SCHED_HOLD_*: full brightness while any reason holds (a tap is awaited,
-                                           the menu or Pet Says is open) */
+                                           the menu, a game or the to-do list is open) */
 bool sched_is_night(void);             /* true while the pet sleeps (idle at night) */

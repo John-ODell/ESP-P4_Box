@@ -14,6 +14,8 @@
 #define PET_TOPIC_PACK   "pet/pack"     /* box -> Mac, retained: the pet it draws, or how a new pack is going */
 #define PET_TOPIC_Q20    "pet/q20"      /* box -> bridge, never retained: 20 Questions start, answers, quit (#78) */
 #define PET_TOPIC_Q20_ASK "pet/q20/ask" /* bridge -> box, never retained: the next question or guess, or an error */
+#define PET_TOPIC_TODO   "pet/todo"     /* bridge -> box, retained: the to-do list (#89, #90) */
+#define PET_TOPIC_TODO_TICK "pet/todo/tick" /* box -> bridge, never retained: {"id", "done"} from a tap on the list */
 
 /* `payload` is NUL-terminated. `retained` is the broker's retain flag: a replay of old state, not fresh news. */
 typedef void (*mqtt_msg_cb_t)(const char *topic, const char *payload, size_t len, bool retained);

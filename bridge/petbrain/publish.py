@@ -32,6 +32,7 @@ from .brain import compute_state
 from .github_source import fetch_days, load_dotenv
 from . import q20, tailnet
 from .todo import TOPIC_TICK, Todo
+from .todo_refs import RefChecker, default_repo
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,10 +109,11 @@ def publish_state(client: mqtt.Client, state: dict) -> None:
              state.get("today", {}).get("total"), state.get("events"))
 
 
-def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier | None:
+def start_notifier(cfg: dict, client: mqtt.Client) -> tuple[Notifier, RefChecker] | None:
     """Session notifications: pet/ack from the box, the local HTTP endpoint, and the pending list that survived the
     last stop (bridge/var/pending.json) published on start. The to-do list (bridge/var/todo.json) rides on the same
-    endpoint and is ticked on pet/todo/tick. None when another bridge already serves the endpoint."""
+    endpoint and is ticked on pet/todo/tick; items with a ref follow GitHub through the RefChecker, which the poll
+    loop runs. None when another bridge already serves the endpoint."""
     def publish(topic: str, payload: str, retain: bool) -> None:
         client.publish(topic, payload, qos=1, retain=retain)
 
@@ -132,7 +134,9 @@ def start_notifier(cfg: dict, client: mqtt.Client) -> Notifier | None:
     serve_in_thread(server)
     log.info("notify endpoint: POST http://%s:%d/event and /todo", cfg["http_host"], cfg["http_port"])
     tailnet.start(cfg, notifier, todo=todo)  # only when PET_TAILNET=on and a long token is set; see petbrain/tailnet.py
-    return notifier
+    repo = default_repo()
+    log.info("to-do refs: plain #n means %s", "/".join(repo) if repo else "nothing (set PET_TODO_REPO)")
+    return notifier, RefChecker(todo, repo=repo)
 
 
 def coerce(value: str):
@@ -168,8 +172,11 @@ def main() -> None:
     cfg = config()
     loop_mode = not (a.once or a.state_file)
     client = connect(cfg, topics=(TOPIC_ACK, TOPIC_TICK, q20.TOPIC_IN) if loop_mode else ())
+    refs = None
     if loop_mode:
-        if start_notifier(cfg, client) is not None:
+        started = start_notifier(cfg, client)
+        if started is not None:
+            refs = started[1]
             q20.attach(client)   # like the notifier, left to the bridge already running: two would both answer
 
     if a.state_file:
@@ -188,6 +195,11 @@ def main() -> None:
             log.error("cycle failed: %s", exc)
             if a.once:
                 sys.exit(1)
+        if refs is not None:
+            try:
+                refs.check()   # to-do items with a ref follow GitHub (#91)
+            except Exception as exc:
+                log.warning("to-do refs not checked: %s", exc)
         if a.once:
             break
         time.sleep(cfg["poll_min"] * 60)

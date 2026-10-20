@@ -35,7 +35,9 @@ def todo_url(event_url: str) -> str:
 
 def line(item: dict) -> str:
     ref = f"  {item['ref']}" if item.get("ref") else ""
-    return f"{item['id']:>4}  [{'x' if item['done'] else ' '}]  {item['text']}{ref}  ({item['by']})"
+    said = {"open": "still open", "dropped": "closed without being done"}
+    flag = f"  ! ticked, but {item.get('ref')} is {said.get(item['flag'], item['flag'])}" if item.get("flag") else ""
+    return f"{item['id']:>4}  [{'x' if item['done'] else ' '}]  {item['text']}{ref}  ({item['by']}){flag}"
 
 
 def main() -> int:

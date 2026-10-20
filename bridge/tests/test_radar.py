@@ -26,6 +26,12 @@ class FetchTests(unittest.TestCase):
             ("search/issues", "reviewed-by:John-ODell is:pr updated:>=2025-10-20"),
             ("search/issues", "author:John-ODell is:issue created:>=2025-10-20")])
 
+    def test_an_incomplete_search_fails_the_whole_radar(self):
+        def get(token, path):
+            return {"login": "x"} if path == "user" else {"total_count": 3, "incomplete_results": True}
+        with self.assertRaisesRegex(RuntimeError, "incomplete"):
+            fetch_counts(date(2025, 10, 20), token="t", get=get)
+
     def test_a_search_without_a_count_fails_the_whole_radar(self):
         def get(token, path):
             return {"login": "x"} if path == "user" else {"message": "API rate limit exceeded"}
@@ -59,6 +65,12 @@ class RadarTests(unittest.TestCase):
         self.now += timedelta(seconds=EVERY)
         self.assertFalse(self.radar.update())   # asked again, nothing new
         self.assertEqual((len(self.asked), len(self.sent)), (3, 2))
+
+    def test_a_clock_set_back_makes_it_due(self):
+        self.radar.update()
+        self.now -= timedelta(hours=3)
+        self.radar.update()
+        self.assertEqual(len(self.asked), 2)
 
     def test_a_failure_raises_and_the_next_poll_tries_again(self):
         def broken(since):

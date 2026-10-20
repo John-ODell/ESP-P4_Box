@@ -185,15 +185,16 @@ def main() -> None:
     client = connect(cfg, topics=(TOPIC_ACK, TOPIC_TICK, TOPIC_FEED_ADD, q20.TOPIC_IN) if loop_mode else ())
     refs = feed = radar = ci = machines = None
     if loop_mode:
-        names = [n for n in os.environ.get("PET_MACHINES", "").split(",") if n.strip()] or None
-        machines = Machines(lambda topic, payload, retain: client.publish(topic, payload, qos=1, retain=retain),
-                            names=names, every=int(cfg["poll_min"] * 60))
-        machines.start()   # the Machines tab (#108): its own thread, once a minute
-        radar = Radar(lambda topic, payload, retain: client.publish(topic, payload, qos=1, retain=retain))
-        ci = CI(lambda topic, payload, retain: client.publish(topic, payload, qos=1, retain=retain))
         started = start_notifier(cfg, client)
-        if started is not None:
+        if started is not None:   # GitHub's extras too: a second bridge would publish the same retained topics
             refs, feed = started[1], started[2]
+            radar = Radar(lambda topic, payload, retain: client.publish(topic, payload, qos=1, retain=retain),
+                          now=lambda: datetime.now(cfg["tz"]))   # the year's first day as bullseye.sh, in local time
+            ci = CI(lambda topic, payload, retain: client.publish(topic, payload, qos=1, retain=retain))
+            names = [n for n in os.environ.get("PET_MACHINES", "").split(",") if n.strip()] or None
+            machines = Machines(lambda topic, payload, retain: client.publish(topic, payload, qos=1, retain=retain),
+                                names=names, every=int(cfg["poll_min"] * 60))
+            machines.start()   # the Machines tab (#108): its own thread, once a minute
             q20.attach(client)   # like the notifier, left to the bridge already running: two would both answer
 
     if a.state_file:

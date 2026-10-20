@@ -18,7 +18,7 @@ static const char *TAG = "radar";
 #define SLICES    4
 #define COUNT_MAX 9999999
 #define BULLSEYE  80     /* smallest / largest, percent, at or above which the shape is a bullseye */
-#define TRACK_W   300
+#define TRACK_W   260   /* leaves the count room for "9999999  100%" */
 
 /* In the order bullseye.sh prints them */
 static const char *const KEY[SLICES] = {"c", "r", "p", "i"};

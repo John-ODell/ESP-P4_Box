@@ -71,6 +71,10 @@ synced. Drag to scroll, and the same swipe, Close or idle timeout goes back to t
 says "Adding #74 to To do...", then "On To do now: #74" when the bridge's next `pet/todo` has it, or "#74 is already on
 To do". Merged, closed and commit rows take no tap.
 
+**Merges** (#106): when the bridge's poll finds one of your pull requests just merged (`pet/merged`), the pet bounces,
+the banner says "Merged #103!" (or "Merged 3 PRs!"), happiness goes up by `PET_HAPPY_MERGE` (5) for each, three at
+most, and the screen wakes. A level-up waiting for a tap keeps its banner; the happiness still counts.
+
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a
 touch (`PET_DIM_AFTER_S`) it dims to 75% of full (`PET_DIM_PERCENT`; try 50 if that is still too bright). After 10

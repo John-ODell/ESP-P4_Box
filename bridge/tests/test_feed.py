@@ -140,6 +140,46 @@ class AddTests(unittest.TestCase):
             self.assertIsNone(feed.add(b'{"r":"ESP-P4_Box","n":73}'))
 
 
+class MergedTests(unittest.TestCase):
+    """The pet celebrates a merge (#106)."""
+
+    def setUp(self):
+        self.sent, self.now = [], NOW
+        self.answer = viewer(prs=[pr(70, "Old", ts(0), merged=ts(0, 30)), pr(73, "Open", ts(1))])
+        self.feed = Feed(lambda t, p, r: self.sent.append((t, json.loads(p), r)), lambda since: self.answer,
+                         now=lambda: self.now)
+
+    def merged(self):
+        return [(p["items"], r) for t, p, r in self.sent if t == "pet/merged"]
+
+    def test_the_first_poll_celebrates_nothing_already_merged(self):
+        self.feed.update()
+        self.assertEqual(self.merged(), [])
+
+    def test_a_pr_merged_since_the_last_poll_is_sent_once_not_retained(self):
+        self.feed.update()
+        self.answer["pullRequests"]["nodes"][1] = pr(73, "Open", ts(1), merged=ts(1, 20))
+        self.feed.update()
+        self.feed.update()
+        self.assertEqual(self.merged(), [([{"r": "ESP-P4_Box", "n": 73, "x": "#73 Open"}], False)])
+
+    def test_an_old_merge_coming_back_into_the_feed_is_not_news(self):
+        self.feed.update()
+        self.answer["pullRequests"]["nodes"].append(pr(50, "Long ago", ts(0, day=19), merged=ts(1, day=19)))
+        self.feed.update()
+        self.assertEqual(self.merged(), [])
+
+    def test_a_merge_that_left_the_feed_and_came_back_is_not_sent_again(self):
+        self.feed.update()
+        self.answer["pullRequests"]["nodes"][1] = pr(73, "Open", ts(1), merged=ts(1, 20))
+        self.feed.update()
+        gone = self.answer["pullRequests"]["nodes"].pop(1)
+        self.feed.update()
+        self.answer["pullRequests"]["nodes"].append(gone)
+        self.feed.update()
+        self.assertEqual(len(self.merged()), 1)
+
+
 class FeedTests(unittest.TestCase):
     def test_publishes_retained_only_when_the_feed_changed(self):
         sent, asked = [], []

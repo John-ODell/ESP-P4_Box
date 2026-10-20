@@ -175,6 +175,22 @@ static void snack_landed(lv_anim_t *a)
     fill_play();
 }
 
+void face_merged(int count, int number)
+{
+    play_add(PET_HAPPY_MERGE * (count < 3 ? count : 3), "PR merged");
+    if (!s_banner_sticky) {   /* a waiting level-up keeps its celebration loop and banner */
+        anim_play_named("happy/bounce", PET_REACT_CELEBRATE);
+        char text[40];
+        if (count == 1) {
+            snprintf(text, sizeof text, "Merged #%d!", number);
+        } else {
+            snprintf(text, sizeof text, "Merged %d PRs!", count);
+        }
+        banner(text, GOOD_COLOR, false);
+    }
+    fill_play();
+}
+
 /* Where the pet's ink is, from its resting frames (every mood), so touches on blank sprite corners still open the
  * menu. Falls back to the whole sprite if every resting frame is blank. */
 static void find_pet_box(void)

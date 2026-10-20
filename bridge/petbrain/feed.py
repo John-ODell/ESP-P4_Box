@@ -14,13 +14,19 @@ the counts are GitHub's contributions: commits on default branches, so a squash 
     pet/feed       bridge -> box, retained: {"v": 1, "items": [{"t": 1760922613, "k": "pr_merged", "r": "ESP-P4_Box",
                    "x": "#101 Follow to-do refs on GitHub", "n": 101}]}
     pet/feed/add   box -> bridge, never retained: {"r": "ESP-P4_Box", "n": 74}, a tap on an open PR or issue (#104)
+    pet/merged     bridge -> box, never retained: {"v": 1, "items": [{"r": "ESP-P4_Box", "n": 103, "x": "..."}]},
+                   your PRs merged since the last poll (#106), for the pet to celebrate
 
 `t` is Unix time (for commits, the start of that day); `r` the repo without its owner; `n` the PR or issue number. At
 most SHOWN items and BUDGET bytes, so it always fits the box's 4 KB MQTT buffer. It is published only when it changed.
 
 A tap on an open PR or issue on the box puts it on the to-do list, titled as on GitHub and with its "owner/repo#n" ref,
-so todo_refs.py ticks it when it closes; one already open on the list is not added again. `fetch` is injected, so the
-tests run on canned answers.
+so todo_refs.py ticks it when it closes; one already open on the list is not added again.
+
+A PR that is merged in this poll's feed but was not in the last one, merged within MERGE_FRESH seconds, goes to the box
+once on pet/merged. The first poll after a start only learns what is already merged, so a restart celebrates nothing,
+and an old PR that comes back into the feed (a late comment) is too old to count. `fetch` is injected, so the tests run
+on canned answers.
 """
 from __future__ import annotations
 
@@ -35,6 +41,9 @@ from .todo import CONTROL, Todo, TodoError
 
 TOPIC_FEED = "pet/feed"
 TOPIC_ADD = "pet/feed/add"
+TOPIC_MERGED = "pet/merged"
+MERGE_FRESH = 2 * 3600   # a merge older than this when first seen is not news
+MERGED_MAX = 5           # PRs in one pet/merged at most
 OPEN_KINDS = ("pr_open", "issue_open")   # the lines a tap can put on the to-do list
 SENT = ("t", "k", "r", "x", "n")          # what the box gets of each line
 SHOWN = 10
@@ -149,6 +158,7 @@ class Feed:
         self._key = key
         self._last: str | None = None
         self._lines: list[dict] = []   # the last build, all of it: a tap can name a line the box was sent
+        self._merged: set | None = None   # (repo, number) of every merged PR seen since the start; None before the first
 
     def update(self) -> bool:
         """Fetch, and publish when the feed changed. Raises on a GitHub or network failure, which the poll loop logs;
@@ -156,6 +166,7 @@ class Feed:
         now = self._now()
         lines = build(self._fetch(now - timedelta(days=COMMIT_DAYS)), int(now.timestamp()))
         self._lines = lines
+        self._celebrate(lines, int(now.timestamp()))
         text = payload(lines)
         if text == self._last:
             return False
@@ -163,6 +174,19 @@ class Feed:
         self._last = text
         log.info("published %s (%d bytes, %d lines)", TOPIC_FEED, len(text), len(json.loads(text)["items"]))
         return True
+
+    def _celebrate(self, lines: list[dict], now: int) -> list[dict]:
+        """pet/merged for the PRs merged since the last poll; returns them."""
+        merged = [l for l in lines if l["k"] == "pr_merged" and l.get("n")]
+        seen, self._merged = self._merged, (self._merged or set()) | {(l["r"], l["n"]) for l in merged}
+        if seen is None:
+            return []
+        new = [l for l in merged if (l["r"], l["n"]) not in seen and l["t"] >= now - MERGE_FRESH][:MERGED_MAX]
+        if new:
+            self._publish(TOPIC_MERGED, json.dumps({"v": 1, "items": [{k: l[k] for k in ("r", "n", "x")} for l in new]},
+                                                   separators=(",", ":")), False)
+            log.info("published %s: %s", TOPIC_MERGED, ", ".join(f"{l['r']}#{l['n']}" for l in new))
+        return new
 
     def add(self, payload) -> dict | None:
         """pet/feed/add from the box: put that open PR or issue on the to-do list. Returns the item added, or None

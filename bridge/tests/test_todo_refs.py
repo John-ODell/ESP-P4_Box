@@ -40,6 +40,9 @@ class ResolveTests(unittest.TestCase):
     def test_github_states(self):
         for node, want in (({"__typename": "Issue", "state": "OPEN"}, "open"),
                            ({"__typename": "Issue", "state": "CLOSED"}, "done"),
+                           ({"__typename": "Issue", "state": "CLOSED", "stateReason": "COMPLETED"}, "done"),
+                           ({"__typename": "Issue", "state": "CLOSED", "stateReason": "NOT_PLANNED"}, "dropped"),
+                           ({"__typename": "Issue", "state": "CLOSED", "stateReason": "DUPLICATE"}, "dropped"),
                            ({"__typename": "PullRequest", "state": "MERGED"}, "done"),
                            ({"__typename": "PullRequest", "state": "CLOSED"}, "dropped"),
                            ({"__typename": "PullRequest", "state": "OPEN"}, "open"),
@@ -48,8 +51,9 @@ class ResolveTests(unittest.TestCase):
 
     def test_default_repo_from_the_environment_or_the_origin_remote(self):
         self.assertEqual(default_repo({"PET_TODO_REPO": "a/b"}), ("a", "b"))
-        with self.assertLogs("bridge.todo", "WARNING"):
-            self.assertIsNone(default_repo({"PET_TODO_REPO": "nope"}))
+        for bad in ("nope", "https://github.com/a/b", "o/r/", "a/b/c", "/b", "a/"):
+            with self.assertLogs("bridge.todo", "WARNING"):
+                self.assertIsNone(default_repo({"PET_TODO_REPO": bad}), bad)
         with tempfile.TemporaryDirectory() as d:
             subprocess.run(["git", "init", "-q", d], check=True)
             self.assertIsNone(default_repo({}, Path(d)))
@@ -74,6 +78,7 @@ class FetchTests(unittest.TestCase):
         token, query, partial = calls[0]
         self.assertTrue(partial)
         self.assertIn('repository(owner: "John-ODell", name: "ESP-P4_Box") { issueOrPullRequest(number: 97)', query)
+        self.assertIn("... on Issue { state stateReason }", query)
         self.assertEqual(fetch_github([], token="t", post=post), {})
         self.assertEqual(len(calls), 1)
 
@@ -114,8 +119,8 @@ class FollowTests(unittest.TestCase):
         todo.add("Fix it", ref="85")
         todo.set_done(1, True, "box")             # the hook checks this item straight away
         self.assertEqual(fake.asked, [[(*REPO, 85)]])
-        self.assertEqual(sent[-1][1]["items"][0]["flag"], "#85 still open")
-        self.assertEqual(todo.summary()["items"][0]["flag"], "#85 still open")
+        self.assertEqual(sent[-1][1]["items"][0]["flag"], "open")
+        self.assertEqual(todo.summary()["items"][0]["flag"], "open")
         fake.states[(*REPO, 85)] = "done"
         self.assertEqual(refs.check(), 1)
         item = todo._items[0]
@@ -127,7 +132,7 @@ class FollowTests(unittest.TestCase):
         todo, sent, refs = checker(fake)
         todo.add("Land it", ref="o/r#4")
         todo.set_done(1, True)
-        self.assertEqual(todo._items[0]["flag"], "r#4 not merged")
+        self.assertEqual(todo._items[0]["flag"], "dropped")
         todo.set_done(1, False)
         self.assertIsNone(todo._items[0]["flag"])
         self.assertEqual(refs.check(), 0)   # open and not ticked: nothing to say
@@ -142,12 +147,49 @@ class FollowTests(unittest.TestCase):
         item = todo._items[0]
         self.assertEqual((item["done"], item["done_by"], item["flag"]), (False, None, None))
 
+    def test_a_hand_untick_sticks_until_github_moves_again(self):
+        fake = Fake({(*REPO, 97): "done"})
+        todo, sent, refs = checker(fake)
+        todo.add("Flash the box", ref="#97")   # its PR merged before the item was added: ticked at the first look
+        self.assertEqual(refs.check(), 1)
+        todo.set_done(1, False)                # not flashed yet
+        for _ in range(3):
+            self.assertEqual(refs.check(), 0)
+        self.assertFalse(todo._items[0]["done"])
+        fake.states[(*REPO, 97)] = "open"      # reopened, then merged again: that is news, so it ticks
+        self.assertEqual(refs.check(), 0)
+        fake.states[(*REPO, 97)] = "done"
+        self.assertEqual(refs.check(), 1)
+        self.assertEqual(todo._items[0]["done_by"], "github")
+
+    def test_github_moving_without_a_visible_change_is_saved_but_not_published(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "todo.json"
+            todo, sent, refs = checker(Fake({(*REPO, 3): "open"}), store=path)
+            todo.add("x", ref="#3")
+            n = len(sent)
+            self.assertEqual(refs.check(), 0)
+            self.assertEqual(len(sent), n)
+            self.assertEqual(json.loads(path.read_text())["items"][0]["gh"], "open")
+
+    def test_an_unknown_ref_is_warned_about_once(self):
+        todo, _, refs = checker(Fake({}))
+        todo.add("x", ref="a/gone#1")
+        with self.assertLogs("bridge.todo", "WARNING") as logs:
+            refs.check()
+            refs.check()
+            todo.add("y", ref="a/gone#2")
+            refs.check()
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn("a/gone#1", logs.output[0])
+
     def test_unknown_refs_and_plain_refs_without_a_repo_are_left_alone(self):
         fake = Fake({})
         todo, sent, refs = checker(fake, repo=None)
         todo.add("plain", ref="#5")
         todo.add("gone", ref="a/gone#1")
-        todo.set_done(2, True)
+        with self.assertLogs("bridge.todo", "WARNING"):
+            todo.set_done(2, True)
         self.assertEqual(fake.asked, [[("a", "gone", 1)]])
         self.assertEqual(refs.check(), 0)
         self.assertIsNone(todo._items[1]["flag"])
@@ -186,10 +228,17 @@ class FollowTests(unittest.TestCase):
             todo.add("b", ref="#2")
             todo.set_done(1, True)
             raw = json.loads(path.read_text())
-            raw["items"][1]["flag"] = "#2 still open"   # hand-edited onto an open item
+            raw["items"][1]["flag"] = "open"   # hand-edited onto an open item
+            raw["items"][0]["gh"] = "nonsense"      # was "open" from the check after the tick
+            raw["items"][1]["gh"] = "done"
             path.write_text(json.dumps(raw))
             again, _ = make(path)
-            self.assertEqual([i.get("flag") for i in again.summary()["items"]], [None, "#1 still open"])
+            self.assertEqual([i.get("flag") for i in again.summary()["items"]], [None, "open"])
+            self.assertEqual([i["gh"] for i in again._items], [None, "done"])
+            raw["items"][0]["flag"] = "#1 still open, a very long text the box could not hold"
+            path.write_text(json.dumps(raw))
+            again, _ = make(path)
+            self.assertIsNone(again._items[0]["flag"])
 
 
 class FlagCliTests(test_todo.Served):
@@ -201,7 +250,7 @@ class FlagCliTests(test_todo.Served):
         self.todo.set_done(1, True)
         self.assertIsNotNone(refs)
         code, out = self.cli("list")
-        self.assertEqual(out.splitlines()[0], "   1  [x]  Flash it  #90  (john)  ! ticked, but #90 still open")
+        self.assertEqual(out.splitlines()[0], "   1  [x]  Flash it  #90  (john)  ! ticked, but #90 is still open")
 
 
 if __name__ == "__main__":

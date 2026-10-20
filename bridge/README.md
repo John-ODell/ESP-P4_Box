@@ -244,12 +244,14 @@ item goes, and an add is refused while all 50 are open. Underneath it is `POST /
 `{"op": "add", "text", "by", "ref"}` or `{"op": "done" | "undo" | "remove", "id"}`, and `GET /todo` for the whole list.
 
 Items with a ref follow GitHub (#91, `petbrain/todo_refs.py`). Every poll, the bridge asks GitHub about all of them in
-one GraphQL call. It ticks an item itself (`done_by` "github") when its issue is closed or its PR merged, and unticks
-one it ticked if the issue is reopened. When you tick an item by hand while its issue or PR is still open, the bridge
-checks at once and flags it: `flag` is "#85 still open", or "#85 not merged" for a PR closed without merging. The box
-shows the flag in place of the ref, and `todo.py list` adds "! ticked, but #85 still open". The flag goes when GitHub
-agrees or the item is unticked. A plain `#85` means the repo in `PET_TODO_REPO` (`owner/repo`), else the GitHub repo
-this bridge was cloned from. A ref GitHub cannot find is left alone.
+one GraphQL call. It ticks an item itself (`done_by` "github") when its issue is closed as completed or its PR merged,
+and unticks one it ticked if the issue is reopened. It acts only when GitHub's state has moved since it last looked, so
+an item you untick by hand stays unticked until the issue or PR changes again. When you tick an item by hand while
+GitHub disagrees, the bridge checks at once and flags it: `flag` is "open", or "dropped" for an issue closed as not
+planned or duplicate, or a PR closed without merging. The box shows "! #85 still open" or "! #85 closed, not done" in
+place of the ref, and `todo.py list` adds "! ticked, but #85 is still open". The flag goes when GitHub agrees or the
+item is unticked. A plain `#85` means the repo in `PET_TODO_REPO` (`owner/repo`), else the GitHub repo this bridge was
+cloned from. A ref GitHub cannot find (or this token cannot see) is left alone, with one warning in the log.
 
 ## Known limits
 

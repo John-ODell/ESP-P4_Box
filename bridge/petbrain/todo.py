@@ -2,11 +2,12 @@
 
 An item is {"id": 3, "text": "Flash the box", "done": false, "by": "claude", "ref": "#85", "ts": "...",
 "done_ts": null, "done_by": null, "flag": null}. `ref` names an issue or PR ("#85" or "owner/repo#85"), which
-todo_refs.py follows on GitHub (#91): it ticks the item when the work is done, and sets `flag` ("#85 still open") on
-an item ticked by hand while GitHub disagrees.
+todo_refs.py follows on GitHub (#91): it ticks the item when the work is done, and sets `flag` on an item ticked by
+hand while GitHub disagrees: "open" (still open) or "dropped" (closed without being done). `gh` is GitHub's state when
+the bridge last looked; it is kept in the file, not sent.
 
     pet/todo        bridge -> box, retained: {"v": 1, "open": 4, "count": 9,
-                    "items": [{id, text, done, by, ref, flag?}]}, `flag` only on a flagged item
+                    "items": [{id, text, done, by, ref, flag?}]}, `flag` ("open" | "dropped") only when set
                     open items first (oldest first), then the most recently done, at most SHOWN and at most
                     BUDGET bytes (the box drops an MQTT message bigger than its 4 KB buffer)
     pet/todo/tick   box -> bridge, never retained: {"id": 3, "done": true}
@@ -39,6 +40,8 @@ BUDGET = 3500     # bytes of pet/todo at most: the box's buffer is 4096, topic a
 # "#85", "85", "PR 85", or "owner/repo#85" with GitHub's own limits on the names (39 and 100 characters)
 REF = re.compile(r"^(?:(?:PR|issue)\s*)?(?:([A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100})#|#?)(\d{1,7})$",
                  re.IGNORECASE | re.ASCII)
+FLAGS = ("open", "dropped")            # why a hand tick is flagged
+GH_STATES = ("open", "done", "dropped")
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 log = logging.getLogger("bridge.todo")
@@ -123,7 +126,8 @@ class Todo:
                                     "ts": str(it.get("ts", "")),
                                     "done_ts": it.get("done_ts") if done and isinstance(it.get("done_ts"), str) else None,
                                     "done_by": it.get("done_by") if done and isinstance(it.get("done_by"), str) else None,
-                                    "flag": it.get("flag") if done and ref and isinstance(it.get("flag"), str) else None})
+                                    "flag": it.get("flag") if done and ref and it.get("flag") in FLAGS else None,
+                                    "gh": it.get("gh") if ref and it.get("gh") in GH_STATES else None})
             except (KeyError, TypeError, ValueError, AttributeError):
                 log.warning("to-do list in %s: an entry not kept: %r", self._store, it)
         while len(self._items) > MAX_ITEMS:   # the oldest done item first, else the oldest item
@@ -183,7 +187,7 @@ class Todo:
         with self._lock:
             item = {"id": self._next, "text": _text(text, MAX_TEXT, "text"), "done": False,
                     "by": _text(by, MAX_BY, "by"), "ref": parse_ref(ref), "ts": self._now().isoformat(),
-                    "done_ts": None, "done_by": None, "flag": None}
+                    "done_ts": None, "done_by": None, "flag": None, "gh": None}
             if len(self._items) >= MAX_ITEMS:
                 done = [it for it in self._items if it["done"]]
                 if not done:
@@ -255,34 +259,37 @@ class Todo:
             return [(it["id"], it["ref"]) for it in self._items if it["ref"] and (ids is None or it["id"] in ids)]
 
     def follow_github(self, states: dict) -> int:
-        """Apply GitHub's word, {id: "done" | "open" | "dropped" | None}; publishes once when anything changed and
-        returns how many items did."""
-        changed = 0
+        """Apply GitHub's word, {id: "done" | "open" | "dropped" | None}; publishes once when anything shown changed
+        and returns how many items did. The bridge ticks or unticks only when GitHub's state moved since it last
+        looked (`gh`), so a hand untick of an item whose issue is closed stays unticked."""
+        changed, seen = 0, False
         with self._lock:
             for it in self._items:
                 state = states.get(it["id"])
                 if state is None or not it["ref"]:
                     continue   # not asked about, or GitHub had no answer: leave it as it is
-                short = it["ref"].rpartition("/")[2]
+                moved = state != it["gh"]
+                new = {"gh": state}
                 if state == "done":
-                    new = {"done": True, "flag": None}
-                    if not it["done"]:
-                        new.update(done_ts=self._now().isoformat(), done_by="github")
-                elif not it["done"]:
-                    new = {"flag": None}
-                elif it["done_by"] == "github":   # GitHub ticked it and has since reopened it
-                    new = {"done": False, "done_ts": None, "done_by": None, "flag": None}
+                    new["flag"] = None
+                    if not it["done"] and moved:
+                        new.update(done=True, done_ts=self._now().isoformat(), done_by="github")
+                elif it["done"] and it["done_by"] == "github":   # GitHub ticked it and has since reopened it
+                    new.update(done=False, done_ts=None, done_by=None, flag=None)
                 else:
-                    new = {"flag": f"{short} still open" if state == "open" else f"{short} not merged"}
-                if any(it[k] != v for k, v in new.items()):
+                    new["flag"] = state if it["done"] else None   # "open" or "dropped" on a hand tick
+                seen = seen or moved
+                if any(it[k] != v for k, v in new.items() if k != "gh"):
                     what = (f"flagged: {new['flag']}" if new.get("flag") else
-                            "ticked" if new.get("done") and not it["done"] else
-                            "unticked" if new.get("done") is False else "flag cleared")
+                            "ticked" if new.get("done") else "unticked" if new.get("done") is False else
+                            "flag cleared")
                     log.info("to-do %d (%s): GitHub says %s, %s", it["id"], it["ref"], state, what)
-                    it.update(new)
                     changed += 1
+                it.update(new)
             if changed:
                 self._changed()
+            elif seen:
+                self._save()   # only `gh` moved: nothing to show, but remember it
         return changed
 
     def summary(self) -> dict:

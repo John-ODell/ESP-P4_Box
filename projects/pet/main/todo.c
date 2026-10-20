@@ -22,19 +22,21 @@ static const char *TAG = "todo";
 #define ID_MAX    9999999   /* the bridge's ids and counts stay far below this */
 #define REF_MAX   24     /* "#85", or "repo#85" from "owner/repo#85": the end, with the number, is what is kept */
 
+enum { FLAG_NONE, FLAG_OPEN, FLAG_DROPPED };   /* the bridge's "flag": none, "open", "dropped" */
+
 typedef struct {
     int id;
     bool done;
     char text[TEXT_MAX];
     char ref[REF_MAX];
-    char flag[REF_MAX + 12];   /* "#85 still open": ticked by hand while GitHub disagrees (#91) */
+    uint8_t flag;   /* FLAG_*: ticked by hand while GitHub disagrees (#91) */
 } item_t;
 
 static const pet_def_t *s_pet;
 static lv_obj_t *s_root, *s_count, *s_list, *s_empty;
 static lv_obj_t *s_row[TODO_MAX];   /* children: the tick box (its child the tick), the text, the ref */
 static lv_timer_t *s_idle;
-static item_t *s_items;   /* TODO_MAX of them, 1.5 KB in PSRAM: static RAM has little room left (see todo_create) */
+static item_t *s_items;   /* TODO_MAX of them, about 1.5 KB in PSRAM: static RAM has little room left (see todo_create) */
 static int s_n;            /* items held */
 static int s_open;         /* open items on the bridge, including any not sent */
 static int s_count_all;    /* every item on the bridge */
@@ -53,12 +55,12 @@ static void draw_row(int i)
     lv_obj_t *tick = lv_obj_get_child(box, 0);
     lv_label_set_text(text, it->text);
     lv_obj_t *ref = lv_obj_get_child(s_row[i], 2);   /* the flag, when there is one, takes the ref's place */
-    if (it->flag[0]) {
-        lv_label_set_text_fmt(ref, "! %s", it->flag);
+    if (it->flag != FLAG_NONE) {
+        lv_label_set_text_fmt(ref, "! %s %s", it->ref, it->flag == FLAG_OPEN ? "still open" : "closed, not done");
     } else {
         lv_label_set_text(ref, it->ref);
     }
-    lv_obj_set_style_text_color(ref, it->flag[0] ? C(warn) : C(dim), 0);
+    lv_obj_set_style_text_color(ref, it->flag != FLAG_NONE ? C(warn) : C(dim), 0);
     lv_obj_set_style_text_color(text, it->done ? C(dim) : C(ink), 0);
     lv_obj_set_style_text_decor(text, it->done ? LV_TEXT_DECOR_STRIKETHROUGH : LV_TEXT_DECOR_NONE, 0);
     lv_obj_set_style_bg_opa(box, it->done ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
@@ -136,7 +138,7 @@ static void tick_cb(lv_event_t *e)
     }
     it->done = !it->done;
     if (!it->done) {
-        it->flag[0] = '\0';   /* the bridge drops it on an untick too */
+        it->flag = FLAG_NONE;   /* the bridge drops it on an untick too */
     }
     s_open += it->done ? -1 : 1;
     if (s_open < 0) {
@@ -222,7 +224,9 @@ void todo_on_msg(const char *payload, size_t len)
             r = hash ? hash : "";
         }
         snprintf(it->ref, sizeof it->ref, "%s", r);
-        snprintf(it->flag, sizeof it->flag, "%s", cJSON_IsString(flag) && it->done ? flag->valuestring : "");
+        it->flag = !it->done || !cJSON_IsString(flag) ? FLAG_NONE :
+                   strcmp(flag->valuestring, "open") == 0 ? FLAG_OPEN :
+                   strcmp(flag->valuestring, "dropped") == 0 ? FLAG_DROPPED : FLAG_NONE;
     }
     const cJSON *open = cJSON_GetObjectItem(j, "open"), *count = cJSON_GetObjectItem(j, "count");
     s_n = n;
@@ -285,7 +289,7 @@ static void make_row(int i)
 
     lv_obj_t *ref = lv_label_create(row);
     style_text(ref, &lv_font_montserrat_16, C(dim));
-    lv_obj_set_style_max_width(ref, 220, 0);   /* room for "! ESP-P4_Box#97 still open" */
+    lv_obj_set_style_max_width(ref, 260, 0);   /* room for "! #85 closed, not done" */
     lv_obj_set_height(ref, lv_font_get_line_height(&lv_font_montserrat_16));   /* one line, ending in dots */
     lv_label_set_long_mode(ref, LV_LABEL_LONG_DOT);
 }

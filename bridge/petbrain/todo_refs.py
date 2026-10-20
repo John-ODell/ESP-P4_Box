@@ -1,10 +1,16 @@
 """To-do items that follow GitHub (#91). An item with a ref ("#85" or "owner/repo#85") is checked against GitHub
 every poll and right after a hand tick:
 
-    issue closed, PR merged       the bridge ticks the item itself (done_by "github") and clears any flag
-    open                          a hand tick is flagged ("#85 still open"); an item GitHub ticked is unticked again
-    PR closed without merging     a hand tick is flagged ("#85 not merged"); an item GitHub ticked is unticked again
-    not found, no access          left alone
+    issue closed as completed,    the bridge ticks the item itself (done_by "github") and clears any flag
+    PR merged
+    open                          a hand tick is flagged "open"; an item GitHub ticked is unticked again
+    issue closed as not planned   a hand tick is flagged "dropped"; an item GitHub ticked is unticked again
+    or duplicate, PR closed
+    without merging
+    not found, no access          left alone, with one warning in the log
+
+The bridge ticks or unticks only when GitHub's state has moved since it last looked, so an item you untick by hand
+stays unticked until the issue or PR changes again.
 
 A plain "#85" means PET_TODO_REPO ("owner/repo"), else the GitHub repo this bridge was cloned from. All the refs go to
 GitHub in one GraphQL call. `fetch` is injected, so the tests run on canned answers.
@@ -25,6 +31,7 @@ from .todo import Todo
 
 log = logging.getLogger("bridge.todo")
 ROOT = Path(__file__).resolve().parent.parent.parent   # the repo this bridge lives in
+REPO = re.compile(r"^([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100})$")
 REMOTE = re.compile(r"github\.com[:/]([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
 
 Key = tuple   # (owner, repo, number)
@@ -35,9 +42,9 @@ def default_repo(environ=os.environ, root: Path = ROOT) -> tuple[str, str] | Non
     """PET_TODO_REPO, else the origin remote of this checkout; None when neither names a GitHub repo."""
     given = environ.get("PET_TODO_REPO", "").strip()
     if given:
-        owner, _, name = given.partition("/")
-        if owner and name:
-            return owner, name
+        m = REPO.match(given)
+        if m:
+            return m.group(1), m.group(2)
         log.warning("PET_TODO_REPO=%r is not owner/repo; plain #n refs are not checked", given)
         return None
     try:
@@ -63,6 +70,8 @@ def state_of(node: dict | None) -> str | None:
         return None
     kind, state = node.get("__typename"), node.get("state")
     if kind == "Issue":
+        if state == "CLOSED" and node.get("stateReason") in ("NOT_PLANNED", "DUPLICATE"):
+            return "dropped"
         return {"OPEN": "open", "CLOSED": "done"}.get(state)
     if kind == "PullRequest":
         return {"OPEN": "open", "MERGED": "done", "CLOSED": "dropped"}.get(state)
@@ -77,7 +86,7 @@ def fetch_github(keys: list, token: str | None = None, post=graphql) -> dict:
     for i, (owner, name, number) in enumerate(keys):
         parts.append(f"r{i}: repository(owner: {json.dumps(owner)}, name: {json.dumps(name)}) "
                      f"{{ issueOrPullRequest(number: {int(number)}) {{ __typename "
-                     f"... on Issue {{ state }} ... on PullRequest {{ state }} }} }}")
+                     f"... on Issue {{ state stateReason }} ... on PullRequest {{ state }} }} }}")
     data = post(token or find_token(), "query { " + " ".join(parts) + " }", partial=True)
     out = {}
     for i, key in enumerate(keys):
@@ -94,6 +103,7 @@ class RefChecker:
         self._repo = repo
         self._spawn = spawn or (lambda f: threading.Thread(target=f, daemon=True, name="todo-refs").start())
         self._lock = threading.Lock()   # one check at a time: a hand tick during a poll waits its turn
+        self._unknown: set = set()      # refs GitHub had no answer for, warned about once
         todo.on_hand_tick = self.ticked
 
     def check(self, ids=None) -> int:
@@ -109,6 +119,13 @@ class RefChecker:
             if not keys:
                 return 0
             states = self._fetch(list(keys))
+            for key in keys:
+                if states.get(key) is None and key not in self._unknown:
+                    log.warning("to-do ref %s/%s#%d: GitHub has no issue or PR there, or this token cannot see it; "
+                                "left alone", *key)
+                    self._unknown.add(key)
+                elif states.get(key) is not None:
+                    self._unknown.discard(key)
             results = {item_id: states.get(key) for key, item_ids in keys.items() for item_id in item_ids}
             changed = self._todo.follow_github(results)
             if changed:

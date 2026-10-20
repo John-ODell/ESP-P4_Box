@@ -27,6 +27,7 @@
 #define PET_STATS_MS        12000    /* stats overlay auto-hide */
 #define PET_MENU_IDLE_MS    7000     /* play menu closes after this long without a touch */
 #define PET_SWIPE_COOLDOWN_MS 800    /* after a swipe toggles the stats, later swipes wait this long */
+#define PET_TODO_IDLE_MS    45000    /* the to-do list goes back to the pet after this long without a touch */
 
 /* Play (#63): the pet's own happiness, apart from mood/XP/streak. */
 #define PET_HAPPY_START      60      /* first boot */

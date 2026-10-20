@@ -17,6 +17,7 @@
 #include "face.h"
 #include "menu.h"
 #include "q20.h"
+#include "todo.h"
 #include "says.h"
 #include "shot_cmd.h"
 #include "pet_pack.h"
@@ -41,7 +42,7 @@ static pet_notice_t s_top_seen; /* the newest entry ever on top of the list, sam
 static int s_shown;             /* index in s_notify of the entry in the bubble, 0 the newest; same lock */
 static bool s_swallow_click;   /* LVGL fires CLICKED after a gesture or long press; ignore that one */
 static bool s_swiped;             /* this press already swiped: it must not also become a long press */
-static int64_t s_last_swipe_us;   /* when a swipe last toggled the stats, for PET_SWIPE_COOLDOWN_MS */
+static int64_t s_last_swipe_us;   /* when a swipe last opened the stats or the list, for PET_SWIPE_COOLDOWN_MS */
 static bool s_on_pet;             /* this press started on the pet */
 static bool s_petted;             /* ... and has stroked it at least once */
 static int s_stroke;              /* finger travel over the pet since the last heart */
@@ -207,7 +208,7 @@ static void touch_event_cb(lv_event_t *e)
         if (menu_is_open()) {
             break; /* belt and braces: menu.c already stops gestures bubbling out of the overlay */
         }
-        if (s_on_pet) { /* a drag that starts on the pet is petting, however fast; stats swipes start off it */
+        if (s_on_pet) { /* a drag that starts on the pet is petting, however fast; screen swipes start off it */
             s_swallow_click = true;
             break;
         }
@@ -222,8 +223,13 @@ static void touch_event_cb(lv_event_t *e)
             break;
         }
         s_last_swipe_us = now;
-        ESP_LOGI(TAG, "swipe %s -> stats", gesture_name(d));
-        face_toggle_stats();
+        if (d == LV_DIR_LEFT || d == LV_DIR_RIGHT) {   /* sideways: the to-do list (#90); up or down: the stats */
+            ESP_LOGI(TAG, "swipe %s -> to-do list", gesture_name(d));
+            todo_open();
+        } else {
+            ESP_LOGI(TAG, "swipe %s -> stats", gesture_name(d));
+            face_toggle_stats();
+        }
         break;
     }
     default:
@@ -384,6 +390,13 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
         } else {
             ESP_LOGW(TAG, "could not take the display lock; 20 Questions turn dropped");
         }
+    } else if (strcmp(topic, PET_TOPIC_TODO) == 0) {   /* the to-do list (#90); a retained one is simply the list */
+        if (bsp_display_lock(500)) {
+            todo_on_msg(payload, len);
+            bsp_display_unlock();
+        } else {
+            ESP_LOGW(TAG, "could not take the display lock; to-do list not drawn");
+        }
     }
 }
 
@@ -416,6 +429,7 @@ void app_main(void)
     menu_create(scr, pet);
     says_create(scr, pet);   /* over the menu: the menu closes as the game opens */
     q20_create(scr, pet);
+    todo_create(scr, pet);
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr, touch_event_cb, LV_EVENT_ALL, NULL);
     sched_start();

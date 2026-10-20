@@ -12,8 +12,9 @@ the source tint and the waiting counter described below; that part is built and 
 
 Interactions, all passive otherwise: **tap** acknowledges (the waiting session shown in the bubble, banner, stats, a
 waiting level-up), **tap on the bubble** shows the next waiting session, **stroke the pet** (drag a finger over it) for
-hearts, a happy wiggle and a little happiness (#64), **swipe** any direction starting off the pet peeks at the stats for
-12 s (a swipe within 0.8 s of the last one is ignored, so a flick back does not undo it), **long press** off the pet
+hearts, a happy wiggle and a little happiness (#64), **swipe up or down** starting off the pet peeks at the stats for
+12 s, **swipe left or right** opens the to-do list (#90; either way, a swipe within 0.8 s of the last one is ignored,
+so a flick back does not undo it), **long press** off the pet
 opens the play menu (Feed, Pet Says, 20 Questions, Settings, Close; #62). The pet's own area (the box its ink covers in
 its resting frames, logged at boot as `face: pet area`) is for touching the pet: a drag there is petting however fast,
 and a long press there does nothing (it does not acknowledge either); a tap there still acknowledges. The menu closes on
@@ -50,6 +51,14 @@ what comes back on `pet/q20/ask`, so it never holds an API key. A turn takes abo
 around. Close (X), 90 s without a touch (`PET_Q20_IDLE_MS`) or 50 s without a reply from the bridge (`PET_Q20_REPLY_MS`,
 which then says so) ends the game; with no MQTT link it says so at once. Like Pet Says it takes every touch and keeps
 the screen bright.
+
+**To-do list** (#90, `main/todo.c`) is the bridge's list (#89) from the retained `pet/todo`: open items oldest first,
+then the most recently done, 12 at most, each with the issue or PR it is about. A tap on an item ticks or unticks it at
+once and sends `{"id", "done"}` on `pet/todo/tick`; the bridge's next `pet/todo` confirms it. With no MQTT link it says
+so and ticks nothing. The header counts the open items, and says "12 of 15 shown" when the bridge holds more than the
+box was sent. Drag up and down to scroll. A swipe left or right on the list, Close (X) or 45 s without a touch
+(`PET_TODO_IDLE_MS`) goes back to the pet. Items are added on the Mac with `python3 bridge/todo.py add`. Like the
+games it takes every touch and keeps the screen bright.
 
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a
@@ -176,6 +185,7 @@ Console is UART0 at 115200. Layout:
   setup (#53).
 - `main/says.c`: Pet Says, the memory game, over the face with the pet drawn small in the middle.
 - `main/q20.c`: 20 Questions over the face: shows the bridge's turns from `pet/q20/ask`, sends the taps on `pet/q20`.
+- `main/todo.c`: the to-do list over the face: draws `pet/todo`, sends taps on `pet/todo/tick`.
 - `main/play.c`: happiness and snacks, saved in NVS. Each stroke adds `PET_HAPPY_PET` (3), one less for every
   `PET_PET_FADE` (4) recent strokes, down to nothing; each minute forgets two recent strokes (at most 12 are kept),
   so the gain is back to full after 6 minutes' rest. Pet Says adds happiness with `play_says_done()`.

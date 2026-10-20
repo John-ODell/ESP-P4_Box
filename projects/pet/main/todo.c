@@ -6,9 +6,9 @@
  *
  * The header is a row of tabs: To do, where the list always opens; Updates, the GitHub feed (feed.c, #92); Radar, the
  * contribution counts (radar.c, #105); CI, the latest checks per repo (ci.c, #107); Machines, whether the bridge and
- * the machines on Tailscale are up (machines.c, #108). Each tab shows its own page under the header. A tap on
- * an open PR or issue on Updates sends it to the bridge for the list (#104); the header says so until the bridge's
- * next pet/todo has it. */
+ * the machines on Tailscale are up (machines.c, #108). Each tab shows its own page under the header. A tap on an open
+ * PR or issue on Updates sends it to the bridge for the list (#104); the header says so until the bridge's next
+ * pet/todo has it. */
 #include "todo.h"
 #include <assert.h>
 #include <stdio.h>

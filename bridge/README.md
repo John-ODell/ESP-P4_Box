@@ -99,6 +99,7 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/feed/add` | box, when a tap puts an open PR or issue on the to-do list (#104) | no | `{r, n}` |
 | `pet/radar` | bridge, at most hourly when the counts changed (#105) | yes | `{v, since, c, p, r, i}` |
 | `pet/ci` | bridge, every poll when it changed (#107) | yes | `{v, items: [{r, w, s, t}]}` |
+| `pet/machines` | bridge, every minute (#108) | yes | `{v, at, up, poll, every, items: [{n, s, t}], err?}` |
 | `pet/merged` | bridge, on a poll that finds PRs newly merged (#106) | no | `{v, count, items: [{r, n, x}]}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
@@ -299,11 +300,22 @@ not updated" and the next poll tries again.
 The box's CI tab (#107, `petbrain/ci.py`) shows the latest checks on your 12 most recently pushed repos (yours, not
 archived): one GraphQL call a poll for the check suites on the latest commit of each default branch. A suite that never
 started (queued with no run: an app installed on a repo where it has nothing to do, such as a Pages integration without
-a project) is left out. Each other suite is one line: `r` the repo, `w` the workflow, or the app for a suite without one
-("Cloudflare Workers and Pages"), `s` "fail", "run", "pass" or "other" (skipped, neutral, cancelled), `t` when it last
-changed. Failures first, then running, then the rest, newest first; at most 10 lines and 3000 bytes, retained on
-`pet/ci`, published when it changed. If GitHub cannot be reached the log says "CI not updated" and the box keeps the
-last list.
+a project) is left out. Each other suite is one line, the newest of each workflow on that commit: `r` the repo, `w` the
+workflow, or the app for a suite without one ("Cloudflare Workers and Pages"), `s` "fail", "run", "pass" or "other"
+(skipped, neutral, cancelled, waiting for approval), `t` when it last changed. Failures first, then running, then the
+rest, newest first; at most 10 lines and 3000 bytes, retained on `pet/ci`, published when it changed. If GitHub cannot
+be reached the log says "CI not updated" and the box keeps the last list.
+
+## Machines
+
+The box's Machines tab (#108, `petbrain/machines.py`) says whether the things the pet depends on are up. Once a minute,
+on its own thread, the bridge runs `tailscale status --json` and publishes retained on `pet/machines`: when it sent it
+(`at`, so the box can tell the bridge has gone quiet), when it started (`up`), its last good GitHub poll (`poll`) and
+the poll interval (`every`), and one item per machine: `n` the hostname, `s` "up", "down" or "unknown" (named but not on
+the tailnet), `t` when it was last seen. The machines are the hostnames in `PET_MACHINES` (comma separated, any case),
+for example `PET_MACHINES=wordell,johnsdesktop`; without it, every peer that is not a phone or tablet and was seen in
+the last 14 days. When Tailscale cannot be asked (not installed, stopped, logged out) the items are empty and `err` says
+why, and the box shows that instead of anything up or down.
 
 ## Known limits
 

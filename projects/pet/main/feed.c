@@ -70,7 +70,7 @@ static int days_ago(time_t t, time_t now)
     return d < 0 ? 0 : (int)(d + 0.5);
 }
 
-/* "5m ago", "3h ago", "2d ago"; commits are counted by day, so "today", "yesterday". Empty before SNTP has synced. */
+/* "5m ago", "3h ago", "2d ago" for Unix time `t`. Empty before SNTP has synced. */
 void feed_ago(char *buf, size_t size, int64_t t, time_t now)
 {
     buf[0] = '\0';

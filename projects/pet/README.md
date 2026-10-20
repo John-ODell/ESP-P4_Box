@@ -13,8 +13,8 @@ the source tint and the waiting counter described below; that part is built and 
 Interactions, all passive otherwise: **tap** acknowledges (the waiting session shown in the bubble, banner, stats, a
 waiting level-up), **tap on the bubble** shows the next waiting session, **stroke the pet** (drag a finger over it) for
 hearts, a happy wiggle and a little happiness (#64), **swipe up or down** starting off the pet peeks at the stats for
-12 s, **swipe left or right** opens the to-do list (#90; a swipe within 0.8 s of the last one is ignored, so a flick
-back does not undo it), **long press** off the pet
+12 s, **swipe left or right** opens the to-do list (#90; either way, a swipe within 0.8 s of the last one is ignored,
+so a flick back does not undo it), **long press** off the pet
 opens the play menu (Feed, Pet Says, 20 Questions, Settings, Close; #62). The pet's own area (the box its ink covers in
 its resting frames, logged at boot as `face: pet area`) is for touching the pet: a drag there is petting however fast,
 and a long press there does nothing (it does not acknowledge either); a tap there still acknowledges. The menu closes on

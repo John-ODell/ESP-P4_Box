@@ -19,7 +19,8 @@ static const char *TAG = "todo";
 #define C(name) lv_color_hex(s_pet->colors.name)
 #define TODO_MAX  12     /* the bridge sends at most 12 */
 #define TEXT_MAX  96     /* the bridge sends at most 80 characters */
-#define REF_MAX   24     /* "#85" or "owner/repo#85", cut to fit the row */
+#define ID_MAX    9999999   /* the bridge's ids and counts stay far below this */
+#define REF_MAX   24     /* "#85", or "repo#85" from "owner/repo#85": the end, with the number, is what is kept */
 
 typedef struct {
     int id;
@@ -30,7 +31,7 @@ typedef struct {
 
 static const pet_def_t *s_pet;
 static lv_obj_t *s_root, *s_count, *s_list, *s_empty;
-static lv_obj_t *s_row[TODO_MAX], *s_box[TODO_MAX], *s_tick[TODO_MAX], *s_text[TODO_MAX], *s_ref[TODO_MAX];
+static lv_obj_t *s_row[TODO_MAX];   /* children: the tick box (its child the tick), the text, the ref */
 static lv_timer_t *s_idle;
 static item_t *s_items;   /* TODO_MAX of them, 1.5 KB in PSRAM: static RAM has little room left (see todo_create) */
 static int s_n;            /* items held */
@@ -41,19 +42,23 @@ static bool s_is_open;
 static bool s_swiped;      /* this press became a swipe: LVGL still sends CLICKED to the row it started on */
 static const char *s_note; /* a one-off line in the header, until the next redraw */
 static uint32_t s_opened_ms;   /* lv_tick when the list opened */
+static int s_press_id;         /* the item in the row the finger went down on: the bridge reorders the list after a
+                                  tick, so by the release that row may hold another item */
 
 static void draw_row(int i)
 {
     const item_t *it = &s_items[i];
-    lv_label_set_text(s_text[i], it->text);
-    lv_label_set_text(s_ref[i], it->ref);
-    lv_obj_set_style_text_color(s_text[i], it->done ? C(dim) : C(ink), 0);
-    lv_obj_set_style_text_decor(s_text[i], it->done ? LV_TEXT_DECOR_STRIKETHROUGH : LV_TEXT_DECOR_NONE, 0);
-    lv_obj_set_style_bg_opa(s_box[i], it->done ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    lv_obj_t *box = lv_obj_get_child(s_row[i], 0), *text = lv_obj_get_child(s_row[i], 1);
+    lv_obj_t *tick = lv_obj_get_child(box, 0);
+    lv_label_set_text(text, it->text);
+    lv_label_set_text(lv_obj_get_child(s_row[i], 2), it->ref);
+    lv_obj_set_style_text_color(text, it->done ? C(dim) : C(ink), 0);
+    lv_obj_set_style_text_decor(text, it->done ? LV_TEXT_DECOR_STRIKETHROUGH : LV_TEXT_DECOR_NONE, 0);
+    lv_obj_set_style_bg_opa(box, it->done ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     if (it->done) {
-        lv_obj_remove_flag(s_tick[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(tick, LV_OBJ_FLAG_HIDDEN);
     } else {
-        lv_obj_add_flag(s_tick[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(tick, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -109,6 +114,10 @@ static void tick_cb(lv_event_t *e)
         return;
     }
     item_t *it = &s_items[i];
+    if (it->id != s_press_id) {   /* the list was redrawn under the finger: do not tick what moved into the row */
+        ESP_LOGI(TAG, "tap dropped: row %d held item %d at the press, %d now", i, s_press_id, it->id);
+        return;
+    }
     char buf[48];
     snprintf(buf, sizeof buf, "{\"id\":%d,\"done\":%s}", it->id, it->done ? "false" : "true");
     if (!mqtt_link_connected() || !mqtt_link_publish(PET_TOPIC_TODO_TICK, buf, false)) {
@@ -120,6 +129,9 @@ static void tick_cb(lv_event_t *e)
     }
     it->done = !it->done;
     s_open += it->done ? -1 : 1;
+    if (s_open < 0) {
+        s_open = 0;
+    }
     ESP_LOGI(TAG, "%s sent: %s", buf, it->text);
     draw_row(i);
     draw_count();
@@ -127,7 +139,13 @@ static void tick_cb(lv_event_t *e)
 
 static void press_cb(lv_event_t *e)
 {
-    (void)e;
+    lv_obj_t *target = lv_event_get_current_target(e);
+    s_press_id = 0;
+    for (int i = 0; i < s_n; i++) {
+        if (target == s_row[i]) {
+            s_press_id = s_items[i].id;
+        }
+    }
     s_swiped = false;
     sched_touch();
     lv_timer_reset(s_idle);
@@ -170,24 +188,36 @@ void todo_on_msg(const char *payload, size_t len)
         cJSON_Delete(j);
         return;
     }
-    int n = 0;
+    int n = 0, open_held = 0;
     const cJSON *el;
     cJSON_ArrayForEach(el, items) {
         const cJSON *id = cJSON_GetObjectItem(el, "id"), *text = cJSON_GetObjectItem(el, "text");
         const cJSON *done = cJSON_GetObjectItem(el, "done"), *ref = cJSON_GetObjectItem(el, "ref");
-        if (n >= TODO_MAX || !cJSON_IsNumber(id) || !cJSON_IsString(text)) {
+        /* ids are whole numbers from 1 (the bridge counts up); anything else could tick the wrong item */
+        if (n >= TODO_MAX || !cJSON_IsNumber(id) || id->valuedouble < 1 || id->valuedouble > ID_MAX ||
+            id->valuedouble != (double)(int)id->valuedouble || !cJSON_IsString(text)) {
             continue;
         }
         item_t *it = &s_items[n++];
-        it->id = id->valueint;
+        it->id = (int)id->valuedouble;
         it->done = cJSON_IsTrue(done);
+        open_held += !it->done;
         snprintf(it->text, sizeof it->text, "%s", text->valuestring);
-        snprintf(it->ref, sizeof it->ref, "%s", cJSON_IsString(ref) ? ref->valuestring : "");
+        const char *r = cJSON_IsString(ref) ? ref->valuestring : "";
+        const char *slash = strrchr(r, '/');   /* "owner/repo#85" -> "repo#85": the number must survive */
+        r = slash ? slash + 1 : r;
+        if (strlen(r) >= sizeof it->ref) {
+            const char *hash = strrchr(r, '#');
+            r = hash ? hash : "";
+        }
+        snprintf(it->ref, sizeof it->ref, "%s", r);
     }
     const cJSON *open = cJSON_GetObjectItem(j, "open"), *count = cJSON_GetObjectItem(j, "count");
     s_n = n;
-    s_open = cJSON_IsNumber(open) ? open->valueint : 0;
-    s_count_all = cJSON_IsNumber(count) ? count->valueint : n;
+    s_open = cJSON_IsNumber(open) && open->valuedouble >= open_held && open->valuedouble <= ID_MAX ?
+             (int)open->valuedouble : open_held;
+    s_count_all = cJSON_IsNumber(count) && count->valuedouble >= n && count->valuedouble <= ID_MAX ?
+                  (int)count->valuedouble : n;
     s_have = true;
     cJSON_Delete(j);
     ESP_LOGI(TAG, "list: %d open, %d held of %d", s_open, s_n, s_count_all);
@@ -204,7 +234,7 @@ static void style_text(lv_obj_t *l, const lv_font_t *font, lv_color_t color)
 /* One row: a tick box, the text (two lines at most) and the issue or PR it is about. The whole row is the button. */
 static void make_row(int i)
 {
-    lv_obj_t *row = s_row[i] = lv_obj_create(s_list);
+    lv_obj_t *row = s_row[i] = lv_obj_create(s_list);   /* draw_row finds the parts by child index */
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(row, 84, 0);
@@ -222,7 +252,7 @@ static void make_row(int i)
     lv_obj_add_event_cb(row, press_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(row, tick_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
-    lv_obj_t *box = s_box[i] = lv_obj_create(row);
+    lv_obj_t *box = lv_obj_create(row);
     lv_obj_remove_style_all(box);
     lv_obj_set_size(box, 48, 48);
     lv_obj_set_style_radius(box, 10, 0);
@@ -230,20 +260,21 @@ static void make_row(int i)
     lv_obj_set_style_border_color(box, C(accent), 0);
     lv_obj_set_style_bg_color(box, C(accent), 0);
     lv_obj_remove_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t *tick = s_tick[i] = lv_label_create(box);
+    lv_obj_t *tick = lv_label_create(box);
     lv_label_set_text(tick, LV_SYMBOL_OK);
     style_text(tick, &lv_font_montserrat_24, C(background));
     lv_obj_center(tick);
 
-    lv_obj_t *text = s_text[i] = lv_label_create(row);
+    lv_obj_t *text = lv_label_create(row);
     style_text(text, &lv_font_montserrat_24, C(ink));
     lv_obj_set_flex_grow(text, 1);
     lv_label_set_long_mode(text, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_line_space(text, 4, 0);
 
-    lv_obj_t *ref = s_ref[i] = lv_label_create(row);
+    lv_obj_t *ref = lv_label_create(row);
     style_text(ref, &lv_font_montserrat_16, C(dim));
     lv_obj_set_style_max_width(ref, 150, 0);
+    lv_obj_set_height(ref, lv_font_get_line_height(&lv_font_montserrat_16));   /* one line, ending in dots */
     lv_label_set_long_mode(ref, LV_LABEL_LONG_DOT);
 }
 
@@ -331,9 +362,4 @@ void todo_open(void)
     lv_timer_reset(s_idle);
     lv_timer_resume(s_idle);
     sched_hold(SCHED_HOLD_LIST, true);
-}
-
-bool todo_is_open(void)
-{
-    return s_is_open;
 }

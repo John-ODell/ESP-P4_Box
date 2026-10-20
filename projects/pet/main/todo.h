@@ -9,5 +9,4 @@
  * held. */
 void todo_create(lv_obj_t *parent, const pet_def_t *pet);  /* after q20_create, so it draws over everything */
 void todo_open(void);
-bool todo_is_open(void);
 void todo_on_msg(const char *payload, size_t len);         /* a pet/todo message, retained or fresh */

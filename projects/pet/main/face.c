@@ -179,7 +179,12 @@ void face_merged(int count, int number)
 {
     play_add(PET_HAPPY_MERGE * (count < 3 ? count : 3), "PR merged");
     if (!s_banner_sticky) {   /* a waiting level-up keeps its celebration loop and banner */
-        anim_play_named("happy/bounce", PET_REACT_CELEBRATE);
+        if (s_stats_timer) {   /* the banner draws under the stats overlay: put it away */
+            lv_timer_delete(s_stats_timer);
+            s_stats_timer = NULL;
+        }
+        show(s_stats, false);
+        anim_play(PET_REACT_CELEBRATE, false);
         char text[40];
         if (count == 1) {
             snprintf(text, sizeof text, "Merged #%d!", number);

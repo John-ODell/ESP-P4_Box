@@ -4,7 +4,8 @@
  * bridge's next pet/todo confirms it. A left or right swipe on the list, Close or PET_TODO_IDLE_MS without a touch
  * goes back to the pet. Like the games it takes every touch, so nothing here acknowledges an AI session.
  *
- * The header has two tabs: To do, where the list always opens, and Updates, the GitHub feed (feed.c, #92). A tap on
+ * The header is a row of tabs: To do, where the list always opens; Updates, the GitHub feed (feed.c, #92); Radar, the
+ * contribution counts (radar.c, #105). Each tab shows its own page under the header. A tap on
  * an open PR or issue on Updates sends it to the bridge for the list (#104); the header says so until the bridge's
  * next pet/todo has it. */
 #include "todo.h"
@@ -13,6 +14,7 @@
 #include <string.h>
 #include "cJSON.h"
 #include "feed.h"
+#include "radar.h"
 #include "mqtt_link.h"
 #include "pet_config.h"
 #include "sched.h"
@@ -42,7 +44,10 @@ typedef struct {
 
 static const pet_def_t *s_pet;
 static lv_obj_t *s_root, *s_count, *s_list, *s_empty;
-static lv_obj_t *s_tab_todo, *s_tab_feed, *s_feed;   /* the header's two tabs, and the Updates tab's rows */
+enum { TAB_TODO, TAB_FEED, TAB_RADAR, TAB_COUNT };
+static const char *const TAB_NAME[TAB_COUNT] = {"To do", "Updates", "Radar"};
+static lv_obj_t *s_tabs;              /* the tab bar: TAB_COUNT labels, by index */
+static lv_obj_t *s_page[TAB_COUNT];   /* what each tab shows under the header; s_page[TAB_TODO] is s_list */
 static lv_obj_t *s_row[TODO_MAX];   /* children: the tick box (its child the tick), the text, the ref */
 static lv_timer_t *s_idle;
 static lv_timer_t *s_add_wait;   /* runs while s_adding waits for the bridge */
@@ -52,7 +57,7 @@ static int s_open;         /* open items on the bridge, including any not sent *
 static int s_count_all;    /* every item on the bridge */
 static bool s_have;        /* a pet/todo has arrived since boot */
 static bool s_is_open;
-static bool s_on_feed;     /* the Updates tab is showing */
+static int s_tab;          /* TAB_*: the tab showing */
 static bool s_swiped;      /* this press became a swipe: LVGL still sends CLICKED to the row it started on */
 static const char *s_note; /* a one-off line in the header, until the next redraw */
 static uint32_t s_opened_ms;   /* lv_tick when the list opened */
@@ -88,8 +93,10 @@ static void draw_count(void)
 {
     if (s_note) {
         lv_label_set_text(s_count, s_note);
-    } else if (s_on_feed) {
+    } else if (s_tab == TAB_FEED) {
         lv_label_set_text(s_count, s_feed_note[0] ? s_feed_note : feed_summary());
+    } else if (s_tab == TAB_RADAR) {
+        lv_label_set_text(s_count, radar_summary());
     } else if (!s_have) {
         lv_label_set_text(s_count, "");
     } else if (s_count_all > s_n) {   /* more on the bridge than the box was sent */
@@ -109,7 +116,7 @@ static void draw(void)
             lv_obj_add_flag(s_row[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
-    if (s_n == 0 && !s_on_feed) {
+    if (s_n == 0 && s_tab == TAB_TODO) {
         lv_label_set_text(s_empty, !s_have ? "No list from the bridge yet." :
                                    "Nothing on the list.\n\nAdd one on the Mac:\npython3 bridge/todo.py add \"...\"");
         lv_obj_remove_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
@@ -119,19 +126,22 @@ static void draw(void)
     draw_count();
 }
 
-static void show_tab(bool feed)
+static void show_tab(int tab)
 {
-    s_on_feed = feed;
+    s_tab = tab;
     s_feed_note[0] = s_adding[0] = '\0';   /* a new look at the tab: what an earlier tap said is old news */
-    lv_obj_set_style_text_color(s_tab_todo, feed ? C(dim) : C(accent), 0);
-    lv_obj_set_style_text_color(s_tab_feed, feed ? C(accent) : C(dim), 0);
-    if (feed) {
+    for (int i = 0; i < TAB_COUNT; i++) {
+        lv_obj_t *label = lv_obj_get_child(s_tabs, i);
+        if (i == tab) {
+            lv_obj_add_state(label, LV_STATE_CHECKED);
+            lv_obj_remove_flag(s_page[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_state(label, LV_STATE_CHECKED);
+            lv_obj_add_flag(s_page[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (tab == TAB_FEED) {
         feed_draw();   /* the ages have moved on since the last pet/feed */
-        lv_obj_add_flag(s_list, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(s_feed, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_feed, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(s_list, LV_OBJ_FLAG_HIDDEN);
     }
     draw();
 }
@@ -190,7 +200,7 @@ static void press_cb(lv_event_t *e)
             s_press_id = s_items[i].id;
         }
     }
-    if (lv_obj_get_parent(target) == s_feed) {
+    if (lv_obj_get_parent(target) == s_page[TAB_FEED]) {
         s_press_id = feed_key(lv_obj_get_index(target));
     }
     s_swiped = false;
@@ -236,7 +246,7 @@ static void feed_tap_cb(lv_event_t *e)
 {
     int i = (int)(intptr_t)lv_event_get_user_data(e);
     char ref[48];   /* a 32-character repo, '#' and 7 digits */
-    if (s_swiped || !s_is_open || !s_on_feed || !feed_ref(i, ref, sizeof ref)) {
+    if (s_swiped || !s_is_open || s_tab != TAB_FEED || !feed_ref(i, ref, sizeof ref)) {
         return;
     }
     if (feed_key(i) != s_press_id) {   /* a new pet/feed moved another line into the row under the finger */
@@ -273,10 +283,10 @@ static void gesture_cb(lv_event_t *e)
 
 static void tab_cb(lv_event_t *e)
 {
-    bool feed = (bool)(intptr_t)lv_event_get_user_data(e);
-    if (!s_swiped && s_is_open && feed != s_on_feed) {
-        ESP_LOGI(TAG, "tab: %s", feed ? "Updates" : "To do");
-        show_tab(feed);
+    int tab = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!s_swiped && s_is_open && tab != s_tab) {
+        ESP_LOGI(TAG, "tab: %s", TAB_NAME[tab]);
+        show_tab(tab);
     }
 }
 
@@ -349,9 +359,9 @@ void todo_on_msg(const char *payload, size_t len)
     draw();
 }
 
-void todo_feed_changed(void)
+void todo_tab_changed(void)
 {
-    if (s_on_feed) {
+    if (s_tab != TAB_TODO) {
         draw_count();
     }
 }
@@ -428,21 +438,31 @@ void todo_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_obj_add_event_cb(s_root, press_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_root, gesture_cb, LV_EVENT_GESTURE, NULL);   /* swipes on the rows bubble up to here */
 
-    /* The tabs: labels with room around them for a finger */
-    for (int i = 0; i < 2; i++) {
-        lv_obj_t *tab = lv_label_create(s_root);
-        lv_label_set_text(tab, i ? "Updates" : "To do");
-        style_text(tab, &lv_font_montserrat_32, C(dim));
+    /* The tab bar, left of Close: padded labels, so each is a finger wide; the one showing is underlined */
+    s_tabs = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_tabs);
+    lv_obj_set_size(s_tabs, 580, LV_SIZE_CONTENT);
+    lv_obj_set_pos(s_tabs, 16, 16);
+    lv_obj_set_flex_flow(s_tabs, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(s_tabs, 8, 0);
+    lv_obj_remove_flag(s_tabs, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    for (int i = 0; i < TAB_COUNT; i++) {
+        lv_obj_t *tab = lv_label_create(s_tabs);   /* show_tab finds them by child index */
+        lv_label_set_text(tab, TAB_NAME[i]);
+        style_text(tab, &lv_font_montserrat_24, C(dim));
+        lv_obj_set_style_pad_hor(tab, 12, 0);
+        lv_obj_set_style_pad_ver(tab, 14, 0);
+        lv_obj_set_style_text_color(tab, C(accent), LV_STATE_CHECKED);
+        lv_obj_set_style_border_side(tab, LV_BORDER_SIDE_BOTTOM, LV_STATE_CHECKED);
+        lv_obj_set_style_border_width(tab, 3, LV_STATE_CHECKED);
+        lv_obj_set_style_border_color(tab, C(accent), LV_STATE_CHECKED);
         lv_obj_add_flag(tab, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_ext_click_area(tab, 20);
-        lv_obj_set_pos(tab, i ? 200 : 32, 30);
         lv_obj_add_event_cb(tab, press_cb, LV_EVENT_PRESSED, NULL);
         lv_obj_add_event_cb(tab, tab_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        *(i ? &s_tab_feed : &s_tab_todo) = tab;
     }
     s_count = lv_label_create(s_root);
     style_text(s_count, &lv_font_montserrat_24, C(dim));
-    lv_obj_set_pos(s_count, 32, 76);
+    lv_obj_set_pos(s_count, 28, 84);
 
     s_list = lv_obj_create(s_root);
     lv_obj_remove_style_all(s_list);
@@ -458,9 +478,13 @@ void todo_create(lv_obj_t *parent, const pet_def_t *pet)
         make_row(i);
     }
 
-    s_feed = feed_create(s_root, pet, press_cb, feed_tap_cb);
-    lv_obj_set_size(s_feed, 656, 572);
-    lv_obj_set_pos(s_feed, 32, 128);
+    s_page[TAB_TODO] = s_list;
+    s_page[TAB_FEED] = feed_create(s_root, pet, press_cb, feed_tap_cb);
+    s_page[TAB_RADAR] = radar_create(s_root, pet, press_cb);
+    for (int i = TAB_FEED; i < TAB_COUNT; i++) {
+        lv_obj_set_size(s_page[i], 656, 572);
+        lv_obj_set_pos(s_page[i], 32, 128);
+    }
 
     s_empty = lv_label_create(s_root);
     style_text(s_empty, &lv_font_montserrat_24, C(dim));
@@ -491,7 +515,7 @@ void todo_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_timer_pause(s_idle);
     s_add_wait = lv_timer_create(add_wait_cb, ADD_WAIT_MS, NULL);
     lv_timer_pause(s_add_wait);
-    show_tab(false);
+    show_tab(TAB_TODO);
 }
 
 void todo_open(void)
@@ -503,9 +527,10 @@ void todo_open(void)
     s_is_open = true;
     s_swiped = true;   /* the swipe that opened the list is still under the finger: its release clicks nothing */
     s_opened_ms = lv_tick_get();
-    show_tab(false);   /* always opens on To do */
-    lv_obj_scroll_to_y(s_list, 0, LV_ANIM_OFF);
-    lv_obj_scroll_to_y(s_feed, 0, LV_ANIM_OFF);
+    show_tab(TAB_TODO);   /* always opens on To do */
+    for (int i = 0; i < TAB_COUNT; i++) {
+        lv_obj_scroll_to_y(s_page[i], 0, LV_ANIM_OFF);
+    }
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_root);
     lv_timer_reset(s_idle);

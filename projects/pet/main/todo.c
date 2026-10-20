@@ -26,6 +26,7 @@ static const char *TAG = "todo";
 #define TEXT_MAX  96     /* the bridge sends at most 80 characters */
 #define ID_MAX    9999999   /* the bridge's ids and counts stay far below this */
 #define NOTE_MAX  64     /* a line in the header */
+#define ADD_WAIT_MS 15000   /* a feed tap the bridge has not confirmed by then is given up on */
 #define REF_MAX   24     /* "#85", or "repo#85" from "owner/repo#85": the end, with the number, is what is kept */
 
 enum { FLAG_NONE, FLAG_OPEN, FLAG_DROPPED };   /* the bridge's "flag": none, "open", "dropped" */
@@ -36,6 +37,7 @@ typedef struct {
     char text[TEXT_MAX];
     char ref[REF_MAX];
     uint8_t flag;   /* FLAG_*: ticked by hand while GitHub disagrees (#91) */
+    uint32_t key;   /* ref_hash of the ref without its owner, before `ref` was cut to fit: "repo#85" or "#85" */
 } item_t;
 
 static const pet_def_t *s_pet;
@@ -43,6 +45,7 @@ static lv_obj_t *s_root, *s_count, *s_list, *s_empty;
 static lv_obj_t *s_tab_todo, *s_tab_feed, *s_feed;   /* the header's two tabs, and the Updates tab's rows */
 static lv_obj_t *s_row[TODO_MAX];   /* children: the tick box (its child the tick), the text, the ref */
 static lv_timer_t *s_idle;
+static lv_timer_t *s_add_wait;   /* runs while s_adding waits for the bridge */
 static item_t *s_items;   /* TODO_MAX of them, about 1.5 KB in PSRAM: static RAM has little room left (see todo_create) */
 static int s_n;            /* items held */
 static int s_open;         /* open items on the bridge, including any not sent */
@@ -195,23 +198,44 @@ static void press_cb(lv_event_t *e)
     lv_timer_reset(s_idle);
 }
 
+/* "repo#85" or "#85", in any case (GitHub's names ignore it), as a number to compare */
+static uint32_t ref_hash(const char *ref)
+{
+    uint32_t h = 5381;
+    for (const char *c = ref; *c; c++) {
+        h = h * 33 + (uint8_t)(*c >= 'A' && *c <= 'Z' ? *c + 32 : *c);
+    }
+    return h;
+}
+
 /* Is `ref` ("repo#74") open on the list? `loose` also takes a plain "#74", which the box cannot tell from another
  * repo's: right for the bridge's answer, too loose to refuse a tap on. */
 static bool on_list(const char *ref, bool loose)
 {
     const char *num = strrchr(ref, '#');
+    uint32_t want = ref_hash(ref), plain = num ? ref_hash(num) : 0;
     for (int i = 0; i < s_n; i++) {
-        if (!s_items[i].done && (strcmp(s_items[i].ref, ref) == 0 || (loose && num && strcmp(s_items[i].ref, num) == 0))) {
+        if (!s_items[i].done && (s_items[i].key == want || (loose && num && s_items[i].key == plain))) {
             return true;
         }
     }
     return false;
 }
 
+static void add_wait_cb(lv_timer_t *t)
+{
+    lv_timer_pause(t);
+    if (s_adding[0]) {   /* the bridge dropped it, or the list it sent is cut before the new item */
+        snprintf(s_feed_note, NOTE_MAX, "No word from the bridge about %s", strrchr(s_adding, '#'));
+        s_adding[0] = '\0';
+        draw_count();
+    }
+}
+
 static void feed_tap_cb(lv_event_t *e)
 {
     int i = (int)(intptr_t)lv_event_get_user_data(e);
-    char ref[REF_MAX + 16];
+    char ref[48];   /* a 32-character repo, '#' and 7 digits */
     if (s_swiped || !s_is_open || !s_on_feed || !feed_ref(i, ref, sizeof ref)) {
         return;
     }
@@ -227,6 +251,8 @@ static void feed_tap_cb(lv_event_t *e)
     } else {
         snprintf(s_adding, NOTE_MAX, "%s", ref);
         snprintf(s_feed_note, NOTE_MAX, "Adding %s to To do...", num);
+        lv_timer_reset(s_add_wait);
+        lv_timer_resume(s_add_wait);
     }
     draw_count();
 }
@@ -296,6 +322,7 @@ void todo_on_msg(const char *payload, size_t len)
         const char *r = cJSON_IsString(ref) ? ref->valuestring : "";
         const char *slash = strrchr(r, '/');   /* "owner/repo#85" -> "repo#85": the number must survive */
         r = slash ? slash + 1 : r;
+        it->key = ref_hash(r);
         if (strlen(r) >= sizeof it->ref) {
             const char *hash = strrchr(r, '#');
             r = hash ? hash : "";
@@ -317,6 +344,7 @@ void todo_on_msg(const char *payload, size_t len)
     if (s_adding[0] && on_list(s_adding, true)) {   /* the bridge added the feed tap, or had it already */
         snprintf(s_feed_note, NOTE_MAX, "On To do now: %s", strrchr(s_adding, '#'));
         s_adding[0] = '\0';
+        lv_timer_pause(s_add_wait);
     }
     draw();
 }
@@ -461,6 +489,8 @@ void todo_create(lv_obj_t *parent, const pet_def_t *pet)
 
     s_idle = lv_timer_create(idle_cb, PET_TODO_IDLE_MS, NULL);
     lv_timer_pause(s_idle);
+    s_add_wait = lv_timer_create(add_wait_cb, ADD_WAIT_MS, NULL);
+    lv_timer_pause(s_add_wait);
     show_tab(false);
 }
 

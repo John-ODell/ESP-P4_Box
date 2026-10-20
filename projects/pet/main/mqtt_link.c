@@ -29,6 +29,7 @@ static void handler(void *arg, esp_event_base_t base, int32_t id, void *data)
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_FEED, 1);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_MERGED, 1);
         esp_mqtt_client_subscribe(s_client, PET_TOPIC_RADAR, 1);
+        esp_mqtt_client_subscribe(s_client, PET_TOPIC_CI, 1);
         if (s_on_status) {
             s_on_status(true);
         }

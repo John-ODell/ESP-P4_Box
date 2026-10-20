@@ -62,7 +62,7 @@ box was sent. Drag up and down to scroll. A swipe left or right on the list, Clo
 (`PET_TODO_IDLE_MS`) goes back to the pet. Items are added on the Mac with `python3 bridge/todo.py add`. Like the
 games it takes every touch and keeps the screen bright.
 
-The list screen's header is a row of tabs (#105): **To do**, **Updates** and **Radar**, the one showing in the accent
+The list screen's header is a row of tabs (#105): **To do**, **Updates**, **Radar** and **CI**, the one showing in the accent
 colour and underlined. It always opens on To do; tap **Updates** for the GitHub feed (#92, `main/feed.c`) from the retained
 `pet/feed`: up to 10 rows, newest first, each with what happened in the pack's colours (Merged and Issue done in
 `good`, PR opened and Issue opened in `accent`, Issue dropped in `warn`, PR closed in `dim`, Committed in `ink`), the title,
@@ -79,6 +79,11 @@ of the largest, with the count and its share of all four. The smallest is in the
 bars names it and how far short it is of the largest ("Furthest behind: code review, 426 short of commits."). When the
 smallest is at least 80% of the largest every bar turns `good` and the line says the shape is close to a bullseye. The
 header says which days are counted.
+
+**CI** (#107, `main/ci.c`) draws the retained `pet/ci`: the latest checks on your recently pushed repos, failures
+first. Each row has a mark (a cross in `warn` for a failure, arrows in `accent` while running, a tick in `good` for a
+pass, a dash otherwise), the repo, and the workflow with how long ago; a failure's workflow line is in `warn` too. The
+header says "2 failing", "Nothing failing, 1 running" or "All passing". Drag to scroll; the rows take no tap.
 
 **Merges** (#106): when the bridge's poll finds one of your pull requests just merged (`pet/merged`), the pet plays
 its celebration, the banner says "Merged #103!" (or "Merged 3 PRs!"), happiness goes up by `PET_HAPPY_MERGE` (5) for
@@ -213,6 +218,7 @@ Console is UART0 at 115200. Layout:
 - `main/todo.c`: the to-do list over the face: draws `pet/todo`, sends taps on `pet/todo/tick`.
 - `main/feed.c`: the list screen's Updates tab: draws `pet/feed`.
 - `main/radar.c`: the list screen's Radar tab: draws `pet/radar` as four bars.
+- `main/ci.c`: the list screen's CI tab: draws `pet/ci`.
 - `main/play.c`: happiness and snacks, saved in NVS. Each stroke adds `PET_HAPPY_PET` (3), one less for every
   `PET_PET_FADE` (4) recent strokes, down to nothing; each minute forgets two recent strokes (at most 12 are kept),
   so the gain is back to full after 6 minutes' rest. Pet Says adds happiness with `play_says_done()`.

@@ -27,6 +27,7 @@ typedef struct {
     bool done;
     char text[TEXT_MAX];
     char ref[REF_MAX];
+    char flag[REF_MAX + 12];   /* "#85 still open": ticked by hand while GitHub disagrees (#91) */
 } item_t;
 
 static const pet_def_t *s_pet;
@@ -51,7 +52,13 @@ static void draw_row(int i)
     lv_obj_t *box = lv_obj_get_child(s_row[i], 0), *text = lv_obj_get_child(s_row[i], 1);
     lv_obj_t *tick = lv_obj_get_child(box, 0);
     lv_label_set_text(text, it->text);
-    lv_label_set_text(lv_obj_get_child(s_row[i], 2), it->ref);
+    lv_obj_t *ref = lv_obj_get_child(s_row[i], 2);   /* the flag, when there is one, takes the ref's place */
+    if (it->flag[0]) {
+        lv_label_set_text_fmt(ref, "! %s", it->flag);
+    } else {
+        lv_label_set_text(ref, it->ref);
+    }
+    lv_obj_set_style_text_color(ref, it->flag[0] ? C(warn) : C(dim), 0);
     lv_obj_set_style_text_color(text, it->done ? C(dim) : C(ink), 0);
     lv_obj_set_style_text_decor(text, it->done ? LV_TEXT_DECOR_STRIKETHROUGH : LV_TEXT_DECOR_NONE, 0);
     lv_obj_set_style_bg_opa(box, it->done ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
@@ -128,6 +135,9 @@ static void tick_cb(lv_event_t *e)
         return;
     }
     it->done = !it->done;
+    if (!it->done) {
+        it->flag[0] = '\0';   /* the bridge drops it on an untick too */
+    }
     s_open += it->done ? -1 : 1;
     if (s_open < 0) {
         s_open = 0;
@@ -193,6 +203,7 @@ void todo_on_msg(const char *payload, size_t len)
     cJSON_ArrayForEach(el, items) {
         const cJSON *id = cJSON_GetObjectItem(el, "id"), *text = cJSON_GetObjectItem(el, "text");
         const cJSON *done = cJSON_GetObjectItem(el, "done"), *ref = cJSON_GetObjectItem(el, "ref");
+        const cJSON *flag = cJSON_GetObjectItem(el, "flag");
         /* ids are whole numbers from 1 (the bridge counts up); anything else could tick the wrong item */
         if (n >= TODO_MAX || !cJSON_IsNumber(id) || id->valuedouble < 1 || id->valuedouble > ID_MAX ||
             id->valuedouble != (double)(int)id->valuedouble || !cJSON_IsString(text)) {
@@ -211,6 +222,7 @@ void todo_on_msg(const char *payload, size_t len)
             r = hash ? hash : "";
         }
         snprintf(it->ref, sizeof it->ref, "%s", r);
+        snprintf(it->flag, sizeof it->flag, "%s", cJSON_IsString(flag) && it->done ? flag->valuestring : "");
     }
     const cJSON *open = cJSON_GetObjectItem(j, "open"), *count = cJSON_GetObjectItem(j, "count");
     s_n = n;
@@ -273,7 +285,7 @@ static void make_row(int i)
 
     lv_obj_t *ref = lv_label_create(row);
     style_text(ref, &lv_font_montserrat_16, C(dim));
-    lv_obj_set_style_max_width(ref, 150, 0);
+    lv_obj_set_style_max_width(ref, 220, 0);   /* room for "! ESP-P4_Box#97 still open" */
     lv_obj_set_height(ref, lv_font_get_line_height(&lv_font_montserrat_16));   /* one line, ending in dots */
     lv_label_set_long_mode(ref, LV_LABEL_LONG_DOT);
 }

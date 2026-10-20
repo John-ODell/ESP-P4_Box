@@ -93,7 +93,7 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/ack` | box, when a tap acknowledges a session (milestone 6) | no | `{source, session}` or `{all: true}` |
 | `pet/q20` | box, during a 20 Questions game (#78) | no | `{game, op: start}`, `{game, op: answer, n, a}` or `{game, op: quit}` |
 | `pet/q20/ask` | bridge, the model's next turn | no | `{game, n, q}`, `{game, n, guess}` or `{game, error}` |
-| `pet/todo` | bridge, on start and after every change to the to-do list (#89) | yes | `{v, open, count, items: [{id, text, done, by, ref}]}` |
+| `pet/todo` | bridge, on start and after every change to the to-do list (#89) | yes | `{v, open, count, items: [{id, text, done, by, ref, flag?}]}` |
 | `pet/todo/tick` | box, when a tap ticks or unticks an item | no | `{id, done}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
@@ -242,6 +242,14 @@ An item is one line of up to 80 characters, plain ASCII the box can draw. `--ref
 (`85`, `#85` or `owner/repo#85`), for the box to check later (#91). The bridge keeps 50 items: past that the oldest done
 item goes, and an add is refused while all 50 are open. Underneath it is `POST /todo` on the session endpoint with
 `{"op": "add", "text", "by", "ref"}` or `{"op": "done" | "undo" | "remove", "id"}`, and `GET /todo` for the whole list.
+
+Items with a ref follow GitHub (#91, `petbrain/todo_refs.py`). Every poll, the bridge asks GitHub about all of them in
+one GraphQL call. It ticks an item itself (`done_by` "github") when its issue is closed or its PR merged, and unticks
+one it ticked if the issue is reopened. When you tick an item by hand while its issue or PR is still open, the bridge
+checks at once and flags it: `flag` is "#85 still open", or "#85 not merged" for a PR closed without merging. The box
+shows the flag in place of the ref, and `todo.py list` adds "! ticked, but #85 still open". The flag goes when GitHub
+agrees or the item is unticked. A plain `#85` means the repo in `PET_TODO_REPO` (`owner/repo`), else the GitHub repo
+this bridge was cloned from. A ref GitHub cannot find is left alone.
 
 ## Known limits
 

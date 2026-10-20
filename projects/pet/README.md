@@ -54,7 +54,8 @@ the screen bright.
 
 **To-do list** (#90, `main/todo.c`) is the bridge's list (#89) from the retained `pet/todo`: open items oldest first,
 then the most recently done, 12 at most, each with the issue or PR it is about. A tap on an item ticks or unticks it at
-once and sends `{"id", "done"}` on `pet/todo/tick`; the bridge's next `pet/todo` confirms it. With no MQTT link it says
+once and sends `{"id", "done"}` on `pet/todo/tick`; the bridge's next `pet/todo` confirms it. An item ticked while its
+issue or PR is still open on GitHub shows the bridge's flag ("! #85 still open", #91) in the warning colour. With no MQTT link it says
 so and ticks nothing. The header counts the open items, and says "12 of 15 shown" when the bridge holds more than the
 box was sent. Drag up and down to scroll. A swipe left or right on the list, Close (X) or 45 s without a touch
 (`PET_TODO_IDLE_MS`) goes back to the pet. Items are added on the Mac with `python3 bridge/todo.py add`. Like the

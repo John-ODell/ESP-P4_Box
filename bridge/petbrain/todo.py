@@ -1,9 +1,12 @@
 """The to-do list (#89): kept by the bridge, added to by John and AI sessions, shown and ticked on the box.
 
 An item is {"id": 3, "text": "Flash the box", "done": false, "by": "claude", "ref": "#85", "ts": "...",
-"done_ts": null, "done_by": null}. `ref` names an issue or PR ("#85" or "owner/repo#85") for #91 to follow.
+"done_ts": null, "done_by": null, "flag": null}. `ref` names an issue or PR ("#85" or "owner/repo#85"), which
+todo_refs.py follows on GitHub (#91): it ticks the item when the work is done, and sets `flag` ("#85 still open") on
+an item ticked by hand while GitHub disagrees.
 
-    pet/todo        bridge -> box, retained: {"v": 1, "open": 4, "count": 9, "items": [{id, text, done, by, ref}]}
+    pet/todo        bridge -> box, retained: {"v": 1, "open": 4, "count": 9,
+                    "items": [{id, text, done, by, ref, flag?}]}, `flag` only on a flagged item
                     open items first (oldest first), then the most recently done, at most SHOWN and at most
                     BUDGET bytes (the box drops an MQTT message bigger than its 4 KB buffer)
     pet/todo/tick   box -> bridge, never retained: {"id": 3, "done": true}
@@ -88,6 +91,7 @@ class Todo:
         self._items: list[dict] = []
         self._next = 1
         self._lock = threading.Lock()
+        self.on_hand_tick: Callable[[int], None] | None = None   # set by todo_refs.RefChecker
         if store is not None:
             self._load()
 
@@ -118,7 +122,8 @@ class Todo:
                                     "by": _text(it.get("by") or "?", MAX_BY, "by"), "ref": ref,
                                     "ts": str(it.get("ts", "")),
                                     "done_ts": it.get("done_ts") if done and isinstance(it.get("done_ts"), str) else None,
-                                    "done_by": it.get("done_by") if done and isinstance(it.get("done_by"), str) else None})
+                                    "done_by": it.get("done_by") if done and isinstance(it.get("done_by"), str) else None,
+                                    "flag": it.get("flag") if done and ref and isinstance(it.get("flag"), str) else None})
             except (KeyError, TypeError, ValueError, AttributeError):
                 log.warning("to-do list in %s: an entry not kept: %r", self._store, it)
         while len(self._items) > MAX_ITEMS:   # the oldest done item first, else the oldest item
@@ -149,7 +154,8 @@ class Todo:
     def _summary(self, cap: int | None) -> dict:
         items = self._ordered()[:cap]
         return {"v": 1, "open": sum(not it["done"] for it in self._items), "count": len(self._items),
-                "items": [{k: it[k] for k in ("id", "text", "done", "by", "ref")} for it in items]}
+                "items": [{k: it[k] for k in ("id", "text", "done", "by", "ref", "flag") if k != "flag" or it[k]}
+                          for it in items]}
 
     def _for_box(self) -> str:
         """pet/todo: SHOWN items, fewer if that is over BUDGET bytes (only with long refs and texts full of quotes)."""
@@ -177,7 +183,7 @@ class Todo:
         with self._lock:
             item = {"id": self._next, "text": _text(text, MAX_TEXT, "text"), "done": False,
                     "by": _text(by, MAX_BY, "by"), "ref": parse_ref(ref), "ts": self._now().isoformat(),
-                    "done_ts": None, "done_by": None}
+                    "done_ts": None, "done_by": None, "flag": None}
             if len(self._items) >= MAX_ITEMS:
                 done = [it for it in self._items if it["done"]]
                 if not done:
@@ -194,12 +200,17 @@ class Todo:
         by = _text(by, MAX_BY, "by")
         with self._lock:
             item = self._find(item_id)
+            hand_tick = False
             if item["done"] != done:
                 item.update(done=done, done_ts=self._now().isoformat() if done else None,
-                            done_by=by if done else None)
+                            done_by=by if done else None, flag=None)
                 self._changed()
                 log.info("to-do %d %s by %s", item["id"], "done" if done else "open again", by)
-            return dict(item)
+                hand_tick = done and item["ref"] is not None
+            result = dict(item)
+        if hand_tick and self.on_hand_tick:
+            self.on_hand_tick(item_id)   # outside the lock: the check takes the lock again to apply what it finds
+        return result
 
     def remove(self, item_id) -> dict:
         with self._lock:
@@ -237,6 +248,42 @@ class Todo:
             self.set_done(msg.get("id"), msg["done"], "box")
         except (ValueError, TypeError) as exc:
             log.warning("ignored pet/todo/tick %r: %s", payload[:120], exc)
+
+    def ref_items(self, ids=None) -> list[tuple[int, str]]:
+        """(id, ref) of the items with a ref, or only those in `ids`."""
+        with self._lock:
+            return [(it["id"], it["ref"]) for it in self._items if it["ref"] and (ids is None or it["id"] in ids)]
+
+    def follow_github(self, states: dict) -> int:
+        """Apply GitHub's word, {id: "done" | "open" | "dropped" | None}; publishes once when anything changed and
+        returns how many items did."""
+        changed = 0
+        with self._lock:
+            for it in self._items:
+                state = states.get(it["id"])
+                if state is None or not it["ref"]:
+                    continue   # not asked about, or GitHub had no answer: leave it as it is
+                short = it["ref"].rpartition("/")[2]
+                if state == "done":
+                    new = {"done": True, "flag": None}
+                    if not it["done"]:
+                        new.update(done_ts=self._now().isoformat(), done_by="github")
+                elif not it["done"]:
+                    new = {"flag": None}
+                elif it["done_by"] == "github":   # GitHub ticked it and has since reopened it
+                    new = {"done": False, "done_ts": None, "done_by": None, "flag": None}
+                else:
+                    new = {"flag": f"{short} still open" if state == "open" else f"{short} not merged"}
+                if any(it[k] != v for k, v in new.items()):
+                    what = (f"flagged: {new['flag']}" if new.get("flag") else
+                            "ticked" if new.get("done") and not it["done"] else
+                            "unticked" if new.get("done") is False else "flag cleared")
+                    log.info("to-do %d (%s): GitHub says %s, %s", it["id"], it["ref"], state, what)
+                    it.update(new)
+                    changed += 1
+            if changed:
+                self._changed()
+        return changed
 
     def summary(self) -> dict:
         """GET /todo: everything, uncapped."""

@@ -90,7 +90,9 @@ def find_token() -> str:
     raise RuntimeError("no GitHub token: set GITHUB_TOKEN in bridge/.env or log in with `gh auth login`")
 
 
-def graphql(token: str, query: str, variables: dict | None = None) -> dict:
+def graphql(token: str, query: str, variables: dict | None = None, partial: bool = False) -> dict:
+    """The query's data. An error raises, unless `partial` and GitHub still sent data (a batch where one part was
+    not found, say): then the data, with that part None."""
     body = json.dumps({"query": query, "variables": variables or {}}).encode()
     req = urllib.request.Request(API, data=body, headers={
         "Authorization": f"bearer {token}",
@@ -99,7 +101,7 @@ def graphql(token: str, query: str, variables: dict | None = None) -> dict:
     })
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    if "errors" in data:
+    if "errors" in data and not (partial and isinstance(data.get("data"), dict)):
         raise RuntimeError(f"GitHub GraphQL error: {data['errors'][0].get('message', data['errors'])}")
     return data["data"]
 

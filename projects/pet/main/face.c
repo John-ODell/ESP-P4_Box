@@ -315,7 +315,9 @@ void face_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_label_set_text(s_link, "booting");
     s_status = label(parent, &lv_font_montserrat_16, DIM_COLOR, LV_ALIGN_BOTTOM_MID, 0, -24);
 
-    s_banner = label(parent, &lv_font_montserrat_32, GOOD_COLOR, LV_ALIGN_TOP_MID, 0, 130);
+    /* Just above today's line, under the pet: up top it was drawn over by the speech bubble, which is up whenever a
+     * session waits, so a merge or level-up said nothing */
+    s_banner = label(parent, &lv_font_montserrat_32, GOOD_COLOR, LV_ALIGN_BOTTOM_MID, 0, -104);
     show(s_banner, false);
 
     /* Speech bubble, top right over the character's shoulder, hidden until an AI session waits. Created before the

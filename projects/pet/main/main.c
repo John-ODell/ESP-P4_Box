@@ -21,6 +21,7 @@
 #include "feed.h"
 #include "radar.h"
 #include "ci.h"
+#include "machines.h"
 #include "todo.h"
 #include "says.h"
 #include "shot_cmd.h"
@@ -436,6 +437,14 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
         }
     } else if (strcmp(topic, PET_TOPIC_MERGED) == 0 && !retained) {   /* PRs just merged: the pet cheers (#106) */
         on_merged(payload, len);
+    } else if (strcmp(topic, PET_TOPIC_MACHINES) == 0) {   /* the Machines tab of the list (#108), every minute */
+        if (bsp_display_lock(500)) {
+            machines_on_msg(payload, len);
+            todo_tab_changed();
+            bsp_display_unlock();
+        } else {
+            ESP_LOGW(TAG, "could not take the display lock; machines not drawn");
+        }
     } else if (strcmp(topic, PET_TOPIC_CI) == 0) {   /* the CI tab of the list (#107) */
         if (bsp_display_lock(500)) {
             ci_on_msg(payload, len);

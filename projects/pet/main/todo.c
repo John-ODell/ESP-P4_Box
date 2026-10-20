@@ -5,8 +5,8 @@
  * goes back to the pet. Like the games it takes every touch, so nothing here acknowledges an AI session.
  *
  * The header is a row of tabs: To do, where the list always opens; Updates, the GitHub feed (feed.c, #92); Radar, the
- * contribution counts (radar.c, #105); CI, the latest checks per repo (ci.c, #107). Each tab shows its own page under
- * the header. A tap on
+ * contribution counts (radar.c, #105); CI, the latest checks per repo (ci.c, #107); Machines, whether the bridge and
+ * the machines on Tailscale are up (machines.c, #108). Each tab shows its own page under the header. A tap on
  * an open PR or issue on Updates sends it to the bridge for the list (#104); the header says so until the bridge's
  * next pet/todo has it. */
 #include "todo.h"
@@ -17,6 +17,7 @@
 #include "feed.h"
 #include "radar.h"
 #include "ci.h"
+#include "machines.h"
 #include "mqtt_link.h"
 #include "pet_config.h"
 #include "sched.h"
@@ -46,8 +47,8 @@ typedef struct {
 
 static const pet_def_t *s_pet;
 static lv_obj_t *s_root, *s_count, *s_list, *s_empty;
-enum { TAB_TODO, TAB_FEED, TAB_RADAR, TAB_CI, TAB_COUNT };
-static const char *const TAB_NAME[TAB_COUNT] = {"To do", "Updates", "Radar", "CI"};
+enum { TAB_TODO, TAB_FEED, TAB_RADAR, TAB_CI, TAB_MACHINES, TAB_COUNT };
+static const char *const TAB_NAME[TAB_COUNT] = {"To do", "Updates", "Radar", "CI", "Machines"};
 static lv_obj_t *s_tabs;              /* the tab bar: TAB_COUNT labels, by index */
 static lv_obj_t *s_page[TAB_COUNT];   /* what each tab shows under the header; s_page[TAB_TODO] is s_list */
 static lv_obj_t *s_row[TODO_MAX];   /* children: the tick box (its child the tick), the text, the ref */
@@ -101,6 +102,8 @@ static void draw_count(void)
         lv_label_set_text(s_count, radar_summary());
     } else if (s_tab == TAB_CI) {
         lv_label_set_text(s_count, ci_summary());
+    } else if (s_tab == TAB_MACHINES) {
+        lv_label_set_text(s_count, machines_summary());
     } else if (!s_have) {
         lv_label_set_text(s_count, "");
     } else if (s_count_all > s_n) {   /* more on the bridge than the box was sent */
@@ -148,6 +151,8 @@ static void show_tab(int tab)
         feed_draw();   /* the ages have moved on since the last pet/feed */
     } else if (tab == TAB_CI) {
         ci_draw();
+    } else if (tab == TAB_MACHINES) {
+        machines_draw();
     }
     draw();
 }
@@ -488,6 +493,7 @@ void todo_create(lv_obj_t *parent, const pet_def_t *pet)
     s_page[TAB_FEED] = feed_create(s_root, pet, press_cb, feed_tap_cb);
     s_page[TAB_RADAR] = radar_create(s_root, pet, press_cb);
     s_page[TAB_CI] = ci_create(s_root, pet, press_cb);
+    s_page[TAB_MACHINES] = machines_create(s_root, pet, press_cb);
     for (int i = TAB_FEED; i < TAB_COUNT; i++) {
         lv_obj_set_size(s_page[i], 656, 572);
         lv_obj_set_pos(s_page[i], 32, 128);

@@ -272,6 +272,13 @@ void todo_on_msg(const char *payload, size_t len)
     draw();
 }
 
+void todo_feed_changed(void)
+{
+    if (s_on_feed) {
+        draw_count();
+    }
+}
+
 static void style_text(lv_obj_t *l, const lv_font_t *font, lv_color_t color)
 {
     lv_obj_set_style_text_font(l, font, 0);

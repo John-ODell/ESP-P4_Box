@@ -53,6 +53,20 @@ static lv_color_t kind_color(int k)
     }
 }
 
+/* Whole calendar days from `t`'s date to today's, here. GitHub's commit day starts at midnight Pacific, which is 2 am
+ * here, on the same date, so its date is the day GitHub counted. */
+static int days_ago(time_t t, time_t now)
+{
+    struct tm a, b;
+    localtime_r(&t, &a);
+    localtime_r(&now, &b);
+    a.tm_hour = b.tm_hour = 12;   /* noon: a daylight saving change cannot move either to another date */
+    a.tm_min = b.tm_min = a.tm_sec = b.tm_sec = 0;
+    a.tm_isdst = b.tm_isdst = -1;
+    double d = difftime(mktime(&b), mktime(&a)) / 86400;
+    return d < 0 ? 0 : (int)(d + 0.5);
+}
+
 /* "5m ago", "3h ago", "2d ago"; commits are counted by day, so "today", "yesterday". Empty before SNTP has synced. */
 static void age(char *buf, size_t size, const line_t *l, time_t now)
 {
@@ -65,8 +79,8 @@ static void age(char *buf, size_t size, const line_t *l, time_t now)
         s = 0;   /* the box's clock a little behind GitHub's */
     }
     if (l->kind == K_COMMITS) {
-        int64_t d = s / 86400;
-        snprintf(buf, size, d == 0 ? "today" : d == 1 ? "yesterday" : "%lldd ago", (long long)d);
+        int d = days_ago((time_t)l->t, now);
+        snprintf(buf, size, d == 0 ? "today" : d == 1 ? "yesterday" : "%dd ago", d);
     } else if (s < 60) {
         snprintf(buf, size, "just now");
     } else if (s < 3600) {
@@ -102,7 +116,7 @@ void feed_draw(void)
         lv_obj_remove_flag(row, LV_OBJ_FLAG_HIDDEN);
     }
     if (s_n == 0) {
-        lv_label_set_text(s_empty, !s_have ? "No updates from the bridge yet." : "Nothing on GitHub in the last few days.");
+        lv_label_set_text(s_empty, !s_have ? "No updates from the bridge yet." : "Nothing on GitHub in the last week.");
         lv_obj_remove_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(s_empty, LV_OBJ_FLAG_HIDDEN);

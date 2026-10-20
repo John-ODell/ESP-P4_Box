@@ -258,10 +258,13 @@ cloned from. A ref GitHub cannot find (or this token cannot see) is left alone, 
 
 The box's list screen has a second tab, Updates (#92, `petbrain/feed.py`): what happened on GitHub lately, newest first.
 Every poll the bridge asks GitHub, in one GraphQL call, for your 15 most recently updated pull requests and issues and
-your commit counts per repo per day for the last 3 days. Each PR or issue is one line in its latest state (`k` is
+your commit counts per repo per day for the last 3 days. PRs and issues whose latest change is over 7 days old are left
+out. Each PR or issue is one line in its latest state, from its `state`, so a reopened one is open again (`k` is
 `pr_open`, `pr_merged`, `pr_closed`, `issue_open`, `issue_closed` or `issue_dropped`, the last for not planned or
-duplicate), and each repo's commits one line per day (`commits`, "4 commits"). `t` is when it happened in Unix time
-(for commits, the start of that day; today's sort as of now, so they stay near the top), `r` the repo without its owner
+duplicate), and each repo's commits one line per day (`commits`, "4 commits"). The counts are GitHub's contributions:
+commits on default branches, so a squash merge counts once. The days are GitHub's: on this account they start at
+midnight Pacific, and 3 days back can reach into a fourth. `t` is when it happened in Unix time (for commits, the start
+of GitHub's day; today's sort as of now, so they stay near the top), `r` the repo without its owner
 and `x` the text, one line of ASCII. At most 10 lines and 3000 bytes, published retained only when it changed. If
 GitHub cannot be reached the log says "feed not updated" and the box keeps the last one.
 

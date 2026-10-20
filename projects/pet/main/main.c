@@ -401,6 +401,7 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
     } else if (strcmp(topic, PET_TOPIC_FEED) == 0) {   /* the Updates tab of the list (#92) */
         if (bsp_display_lock(500)) {
             feed_on_msg(payload, len);
+            todo_feed_changed();
             bsp_display_unlock();
         } else {
             ESP_LOGW(TAG, "could not take the display lock; updates not drawn");

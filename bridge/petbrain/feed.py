@@ -1,8 +1,10 @@
 """The updater feed (#92): the latest things that happened on GitHub, newest first, for the box's list screen.
 
 One GraphQL call per poll: your recent pull requests and issues (with titles, private repos included) and your commit
-counts per repo per day. Each PR or issue is one line, in its latest state; each repo's commits one line per day,
-sorted as of the end of that day (today's: as of now, so they stay near the top):
+counts per repo per day. Each PR or issue changed in the last RECENT_DAYS is one line, in its latest state (from its
+`state`, so a reopened one is open again); each repo's commits one line per day, sorted as of the end of that day
+(today's: as of now, so they stay near the top). Commit days are GitHub's, which need not start at your midnight, and
+the counts are GitHub's contributions: commits on default branches, so a squash merge is one:
 
     pr_open, pr_merged, pr_closed         "#101 Follow to-do refs on GitHub"   (closed: without merging)
     issue_open, issue_closed,             "#91 Follow to-do refs"              (dropped: closed as not planned or
@@ -33,6 +35,7 @@ BUDGET = 3000
 MAX_TEXT = 70
 MAX_REPO = 32
 COMMIT_DAYS = 3   # commit counts from this many days back
+RECENT_DAYS = 7   # PRs and issues whose latest change is older than this are left out
 log = logging.getLogger("bridge.feed")
 
 QUERY = """
@@ -64,7 +67,7 @@ def build(viewer: dict, now: int) -> list[dict]:
 
     def add(t, kind, repo, text, sort=None):
         t = _when(t)
-        if t is not None:
+        if t is not None and (sort is not None or t >= now - RECENT_DAYS * 86400):
             out.append((t if sort is None else sort(t),
                         {"t": t, "k": kind, "r": _line(repo or "?", MAX_REPO), "x": _line(text, MAX_TEXT)}))
 
@@ -72,19 +75,21 @@ def build(viewer: dict, now: int) -> list[dict]:
         if not isinstance(pr, dict):
             continue
         repo, text = (pr.get("repository") or {}).get("name"), f"#{pr.get('number')} {pr.get('title') or ''}"
-        if pr.get("mergedAt"):
-            add(pr["mergedAt"], "pr_merged", repo, text)
-        elif pr.get("closedAt"):
-            add(pr["closedAt"], "pr_closed", repo, text)
+        state = pr.get("state")   # without one, the times say it
+        if state == "MERGED" or (state is None and pr.get("mergedAt")):
+            add(pr.get("mergedAt"), "pr_merged", repo, text)
+        elif state == "CLOSED" or (state is None and pr.get("closedAt")):
+            add(pr.get("closedAt"), "pr_closed", repo, text)
         else:
             add(pr.get("createdAt"), "pr_open", repo, text)
     for issue in ((viewer.get("issues") or {}).get("nodes") or []):
         if not isinstance(issue, dict):
             continue
         repo, text = (issue.get("repository") or {}).get("name"), f"#{issue.get('number')} {issue.get('title') or ''}"
-        if issue.get("closedAt"):
+        state = issue.get("state")
+        if state == "CLOSED" or (state is None and issue.get("closedAt")):
             dropped = issue.get("stateReason") in ("NOT_PLANNED", "DUPLICATE")
-            add(issue["closedAt"], "issue_dropped" if dropped else "issue_closed", repo, text)
+            add(issue.get("closedAt"), "issue_dropped" if dropped else "issue_closed", repo, text)
         else:
             add(issue.get("createdAt"), "issue_open", repo, text)
     by_repo = ((viewer.get("contributionsCollection") or {}).get("commitContributionsByRepository") or [])

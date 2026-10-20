@@ -2,7 +2,7 @@ import json
 import unittest
 from datetime import datetime, timezone
 
-from petbrain.feed import BUDGET, MAX_TEXT, SHOWN, TOPIC_FEED, Feed, build, fetch_github, payload
+from petbrain.feed import BUDGET, MAX_TEXT, RECENT_DAYS, SHOWN, TOPIC_FEED, Feed, build, fetch_github, payload
 
 NOW = datetime(2026, 10, 20, 1, 30, tzinfo=timezone.utc)
 T = int(NOW.timestamp())
@@ -52,6 +52,17 @@ class BuildTests(unittest.TestCase):
                              commits=[("ESP-P4_Box", ts(0), 4), ("old", ts(0, day=18), 1), ("none", ts(0), 0)]), T)
         self.assertEqual([l["x"] for l in lines], ["4 commits", "#5 late", "#4 yesterday evening", "1 commit"])
         self.assertEqual(lines[0]["t"], int(datetime(2026, 10, 20, tzinfo=timezone.utc).timestamp()))
+
+    def test_state_wins_over_the_times_so_a_reopened_item_is_open(self):
+        lines = build(viewer(prs=[dict(pr(7, "reopened", ts(0), closed=ts(1)), state="OPEN")],
+                             issues=[dict(issue(8, "reopened", ts(0), closed=ts(1)), state="OPEN"),
+                                     dict(issue(9, "shut", ts(0), closed=ts(1)), state="CLOSED")]), T)
+        self.assertEqual(sorted(l["k"] for l in lines), ["issue_closed", "issue_open", "pr_open"])
+
+    def test_prs_and_issues_older_than_the_window_are_left_out(self):
+        lines = build(viewer(prs=[pr(1, "old", ts(1, day=20 - RECENT_DAYS - 1)), pr(2, "new", ts(1, day=19))],
+                             commits=[("r", ts(0, day=18), 2)]), T)
+        self.assertEqual([l["x"] for l in lines], ["#2 new", "2 commits"])
 
     def test_odd_nodes_are_skipped_and_text_is_one_line_of_ascii_cut_to_fit(self):
         long = "“Quoted”\nand\x01 " + "word " * 30

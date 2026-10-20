@@ -95,6 +95,7 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/q20/ask` | bridge, the model's next turn | no | `{game, n, q}`, `{game, n, guess}` or `{game, error}` |
 | `pet/todo` | bridge, on start and after every change to the to-do list (#89) | yes | `{v, open, count, items: [{id, text, done, by, ref, flag?}]}` |
 | `pet/todo/tick` | box, when a tap ticks or unticks an item | no | `{id, done}` |
+| `pet/feed` | bridge, every poll when it changed (#92) | yes | `{v, items: [{t, k, r, x}]}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
 it renders the numbers but does not re-run the celebrations in `events`. Updates over the LAN (#16) add two more
@@ -252,6 +253,17 @@ planned or duplicate, or a PR closed without merging. The box shows "! #85 still
 place of the ref, and `todo.py list` adds "! ticked, but #85 is still open". The flag goes when GitHub agrees or the
 item is unticked. A plain `#85` means the repo in `PET_TODO_REPO` (`owner/repo`), else the GitHub repo this bridge was
 cloned from. A ref GitHub cannot find (or this token cannot see) is left alone, with one warning in the log.
+
+## Updates feed
+
+The box's list screen has a second tab, Updates (#92, `petbrain/feed.py`): what happened on GitHub lately, newest first.
+Every poll the bridge asks GitHub, in one GraphQL call, for your 15 most recently updated pull requests and issues and
+your commit counts per repo per day for the last 3 days. Each PR or issue is one line in its latest state (`k` is
+`pr_open`, `pr_merged`, `pr_closed`, `issue_open`, `issue_closed` or `issue_dropped`, the last for not planned or
+duplicate), and each repo's commits one line per day (`commits`, "4 commits"). `t` is when it happened in Unix time
+(for commits, the start of that day; today's sort as of now, so they stay near the top), `r` the repo without its owner
+and `x` the text, one line of ASCII. At most 10 lines and 3000 bytes, published retained only when it changed. If
+GitHub cannot be reached the log says "feed not updated" and the box keeps the last one.
 
 ## Known limits
 

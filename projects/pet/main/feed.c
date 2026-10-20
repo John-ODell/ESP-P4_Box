@@ -1,0 +1,215 @@
+/* The updater feed (#92). The bridge asks GitHub for your latest pull requests, issues and commit counts each poll and
+ * publishes them retained on pet/feed, newest first, at most FEED_MAX lines: one per PR or issue in its latest state,
+ * one per repo per day of commits. Here each line is a row: what happened (coloured by kind), the title, and the repo
+ * with how long ago. Rows are not buttons: a tap does nothing, a drag scrolls, a sideways swipe closes the list. */
+#include "feed.h"
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include "cJSON.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+
+static const char *TAG = "feed";
+
+#define C(name) lv_color_hex(s_pet->colors.name)
+#define FEED_MAX  10     /* the bridge sends at most 10 */
+#define TEXT_MAX  76     /* the bridge sends at most 70 characters */
+#define REPO_MAX  34     /* and repo names of at most 32 */
+#define SYNCED    1577836800   /* 2020-01-01: before this the clock has not been set by SNTP */
+
+enum { K_PR_OPEN, K_PR_MERGED, K_PR_CLOSED, K_ISSUE_OPEN, K_ISSUE_CLOSED, K_ISSUE_DROPPED, K_COMMITS, K_COUNT };
+static const char *const KIND_KEY[K_COUNT] = {
+    "pr_open", "pr_merged", "pr_closed", "issue_open", "issue_closed", "issue_dropped", "commits",
+};
+static const char *const KIND_LABEL[K_COUNT] = {
+    "PR opened", "Merged", "PR closed", "Issue opened", "Issue done", "Issue dropped", "Committed",
+};
+
+typedef struct {
+    int64_t t;
+    uint8_t kind;
+    char repo[REPO_MAX];
+    char text[TEXT_MAX];
+} line_t;
+
+static const pet_def_t *s_pet;
+static lv_obj_t *s_box, *s_empty;   /* s_box's children: FEED_MAX rows, then s_empty */
+static line_t *s_lines;             /* FEED_MAX of them in PSRAM: static RAM has little room left (#96) */
+static int s_n;
+static bool s_have;                 /* a pet/feed has arrived since boot */
+
+static lv_color_t kind_color(int k)
+{
+    switch (k) {
+    case K_PR_MERGED:
+    case K_ISSUE_CLOSED: return C(good);
+    case K_PR_OPEN:
+    case K_ISSUE_OPEN: return C(accent);
+    case K_ISSUE_DROPPED: return C(warn);
+    case K_COMMITS: return C(ink);
+    default: return C(dim);
+    }
+}
+
+/* "5m ago", "3h ago", "2d ago"; commits are counted by day, so "today", "yesterday". Empty before SNTP has synced. */
+static void age(char *buf, size_t size, const line_t *l, time_t now)
+{
+    buf[0] = '\0';
+    if (now < SYNCED || l->t <= 0) {
+        return;
+    }
+    int64_t s = (int64_t)now - l->t;
+    if (s < 0) {
+        s = 0;   /* the box's clock a little behind GitHub's */
+    }
+    if (l->kind == K_COMMITS) {
+        int64_t d = s / 86400;
+        snprintf(buf, size, d == 0 ? "today" : d == 1 ? "yesterday" : "%lldd ago", (long long)d);
+    } else if (s < 60) {
+        snprintf(buf, size, "just now");
+    } else if (s < 3600) {
+        snprintf(buf, size, "%lldm ago", (long long)(s / 60));
+    } else if (s < 86400) {
+        snprintf(buf, size, "%lldh ago", (long long)(s / 3600));
+    } else {
+        snprintf(buf, size, "%lldd ago", (long long)(s / 86400));
+    }
+}
+
+void feed_draw(void)
+{
+    time_t now = time(NULL);
+    for (int i = 0; i < FEED_MAX; i++) {
+        lv_obj_t *row = lv_obj_get_child(s_box, i);   /* children: the kind, the text, the repo and age */
+        if (i >= s_n) {
+            lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        const line_t *l = &s_lines[i];
+        lv_obj_t *kind = lv_obj_get_child(row, 0), *text = lv_obj_get_child(row, 1), *meta = lv_obj_get_child(row, 2);
+        lv_label_set_text(kind, KIND_LABEL[l->kind]);
+        lv_obj_set_style_text_color(kind, kind_color(l->kind), 0);
+        lv_label_set_text(text, l->text);
+        char when[24];
+        age(when, sizeof when, l, now);
+        if (when[0]) {
+            lv_label_set_text_fmt(meta, "%s, %s", l->repo, when);
+        } else {
+            lv_label_set_text(meta, l->repo);
+        }
+        lv_obj_remove_flag(row, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_n == 0) {
+        lv_label_set_text(s_empty, !s_have ? "No updates from the bridge yet." : "Nothing on GitHub in the last few days.");
+        lv_obj_remove_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+const char *feed_summary(void)
+{
+    return s_n > 0 ? "Latest on GitHub, newest first" : "";
+}
+
+void feed_on_msg(const char *payload, size_t len)
+{
+    cJSON *j = cJSON_ParseWithLength(payload, len);
+    const cJSON *items = cJSON_GetObjectItem(j, "items");
+    if (!cJSON_IsArray(items)) {
+        ESP_LOGW(TAG, "pet/feed not understood (%u bytes)", (unsigned)len);
+        cJSON_Delete(j);
+        return;
+    }
+    int n = 0;
+    const cJSON *el;
+    cJSON_ArrayForEach(el, items) {
+        const cJSON *t = cJSON_GetObjectItem(el, "t"), *k = cJSON_GetObjectItem(el, "k");
+        const cJSON *r = cJSON_GetObjectItem(el, "r"), *x = cJSON_GetObjectItem(el, "x");
+        if (n >= FEED_MAX || !cJSON_IsString(k) || !cJSON_IsString(x)) {
+            continue;
+        }
+        int kind = -1;
+        for (int i = 0; i < K_COUNT; i++) {
+            if (strcmp(k->valuestring, KIND_KEY[i]) == 0) {
+                kind = i;
+            }
+        }
+        if (kind < 0) {   /* a kind added on the bridge later: skipped, not drawn wrong */
+            continue;
+        }
+        line_t *l = &s_lines[n++];
+        l->kind = (uint8_t)kind;
+        /* a time the box cannot use only loses the age */
+        l->t = cJSON_IsNumber(t) && t->valuedouble > 0 && t->valuedouble < 4e9 ? (int64_t)t->valuedouble : 0;
+        snprintf(l->repo, sizeof l->repo, "%s", cJSON_IsString(r) ? r->valuestring : "");
+        snprintf(l->text, sizeof l->text, "%s", x->valuestring);
+    }
+    s_n = n;
+    s_have = true;
+    cJSON_Delete(j);
+    ESP_LOGI(TAG, "feed: %d lines", s_n);
+    feed_draw();
+}
+
+static void style_text(lv_obj_t *l, const lv_font_t *font, lv_color_t color)
+{
+    lv_obj_set_style_text_font(l, font, 0);
+    lv_obj_set_style_text_color(l, color, 0);
+    lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
+}
+
+static void make_row(void)
+{
+    lv_obj_t *row = lv_obj_create(s_box);   /* feed_draw finds the parts by child index */
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_hor(row, 20, 0);
+    lv_obj_set_style_pad_ver(row, 14, 0);
+    lv_obj_set_style_pad_row(row, 6, 0);
+    lv_obj_set_style_radius(row, 18, 0);
+    lv_obj_set_style_bg_color(row, C(panel), 0);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   /* touches go to the list: drags scroll */
+
+    lv_obj_t *kind = lv_label_create(row);
+    style_text(kind, &lv_font_montserrat_16, C(dim));
+    lv_obj_t *text = lv_label_create(row);
+    style_text(text, &lv_font_montserrat_24, C(ink));
+    lv_obj_set_width(text, LV_PCT(100));
+    lv_label_set_long_mode(text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_line_space(text, 4, 0);
+    lv_obj_t *meta = lv_label_create(row);
+    style_text(meta, &lv_font_montserrat_16, C(dim));
+    lv_obj_set_width(meta, LV_PCT(100));
+    lv_label_set_long_mode(meta, LV_LABEL_LONG_DOT);
+}
+
+lv_obj_t *feed_create(lv_obj_t *parent, const pet_def_t *pet, lv_event_cb_t press_cb)
+{
+    s_pet = pet;
+    s_lines = heap_caps_calloc(FEED_MAX, sizeof(line_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    assert(s_lines);
+    s_box = lv_obj_create(parent);
+    lv_obj_remove_style_all(s_box);
+    lv_obj_set_flex_flow(s_box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_box, 12, 0);
+    lv_obj_set_style_pad_bottom(s_box, 16, 0);
+    lv_obj_set_scroll_dir(s_box, LV_DIR_VER);   /* only up and down, so a sideways swipe is a gesture */
+    lv_obj_set_scrollbar_mode(s_box, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_add_event_cb(s_box, press_cb, LV_EVENT_PRESSED, NULL);
+    for (int i = 0; i < FEED_MAX; i++) {
+        make_row();
+    }
+    s_empty = lv_label_create(s_box);
+    style_text(s_empty, &lv_font_montserrat_24, C(dim));
+    lv_obj_set_width(s_empty, LV_PCT(100));
+    lv_obj_set_style_pad_top(s_empty, 200, 0);
+    lv_label_set_long_mode(s_empty, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(s_empty, LV_TEXT_ALIGN_CENTER, 0);
+    feed_draw();
+    return s_box;
+}

@@ -11,7 +11,8 @@ one-shot events survive a restart. Session notifications from AI tools arrive on
 the local HTTP endpoint (notify_api.py) and go out on `pet/event` and the retained
 `pet/notify`. 20 Questions games from the box arrive on `pet/q20` and are answered on
 `pet/q20/ask` (q20.py). The to-do list is changed on the same endpoint (POST /todo), shown
-on the retained `pet/todo` and ticked from the box on `pet/todo/tick` (todo.py).
+on the retained `pet/todo` and ticked from the box on `pet/todo/tick` (todo.py). The updater feed of
+recent PRs, issues and commits goes out retained on `pet/feed` every poll (feed.py).
 """
 from __future__ import annotations
 
@@ -33,6 +34,7 @@ from .github_source import fetch_days, load_dotenv
 from . import q20, tailnet
 from .todo import TOPIC_TICK, Todo
 from .todo_refs import RefChecker, default_repo
+from .feed import Feed
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -172,11 +174,12 @@ def main() -> None:
     cfg = config()
     loop_mode = not (a.once or a.state_file)
     client = connect(cfg, topics=(TOPIC_ACK, TOPIC_TICK, q20.TOPIC_IN) if loop_mode else ())
-    refs = None
+    refs = feed = None
     if loop_mode:
         started = start_notifier(cfg, client)
         if started is not None:
             refs = started[1]
+            feed = Feed(lambda topic, payload, retain: client.publish(topic, payload, qos=1, retain=retain))
             q20.attach(client)   # like the notifier, left to the bridge already running: two would both answer
 
     if a.state_file:
@@ -200,6 +203,11 @@ def main() -> None:
                 refs.check()   # to-do items with a ref follow GitHub (#91)
             except Exception as exc:
                 log.warning("to-do refs not checked: %s", exc)
+        if feed is not None:
+            try:
+                feed.update()   # the updater feed on the box's list screen (#92)
+            except Exception as exc:
+                log.warning("feed not updated: %s", exc)
         if a.once:
             break
         time.sleep(cfg["poll_min"] * 60)

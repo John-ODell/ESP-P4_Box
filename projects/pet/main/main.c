@@ -17,6 +17,7 @@
 #include "face.h"
 #include "menu.h"
 #include "q20.h"
+#include "feed.h"
 #include "todo.h"
 #include "says.h"
 #include "shot_cmd.h"
@@ -396,6 +397,13 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
             bsp_display_unlock();
         } else {
             ESP_LOGW(TAG, "could not take the display lock; to-do list not drawn");
+        }
+    } else if (strcmp(topic, PET_TOPIC_FEED) == 0) {   /* the Updates tab of the list (#92) */
+        if (bsp_display_lock(500)) {
+            feed_on_msg(payload, len);
+            bsp_display_unlock();
+        } else {
+            ESP_LOGW(TAG, "could not take the display lock; updates not drawn");
         }
     }
 }

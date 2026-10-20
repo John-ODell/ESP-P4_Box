@@ -2,12 +2,15 @@
  * open items oldest first, then the most recently done, at most TODO_MAX. A left or right swipe from the pet opens it
  * here; a tap on an item ticks or unticks it on screen at once and sends {"id", "done"} on pet/todo/tick, and the
  * bridge's next pet/todo confirms it. A left or right swipe on the list, Close or PET_TODO_IDLE_MS without a touch
- * goes back to the pet. Like the games it takes every touch, so nothing here acknowledges an AI session. */
+ * goes back to the pet. Like the games it takes every touch, so nothing here acknowledges an AI session.
+ *
+ * The header has two tabs: To do, where the list always opens, and Updates, the GitHub feed (feed.c, #92). */
 #include "todo.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include "cJSON.h"
+#include "feed.h"
 #include "mqtt_link.h"
 #include "pet_config.h"
 #include "sched.h"
@@ -34,6 +37,7 @@ typedef struct {
 
 static const pet_def_t *s_pet;
 static lv_obj_t *s_root, *s_count, *s_list, *s_empty;
+static lv_obj_t *s_tab_todo, *s_tab_feed, *s_feed;   /* the header's two tabs, and the Updates tab's rows */
 static lv_obj_t *s_row[TODO_MAX];   /* children: the tick box (its child the tick), the text, the ref */
 static lv_timer_t *s_idle;
 static item_t *s_items;   /* TODO_MAX of them, about 1.5 KB in PSRAM: static RAM has little room left (see todo_create) */
@@ -42,6 +46,7 @@ static int s_open;         /* open items on the bridge, including any not sent *
 static int s_count_all;    /* every item on the bridge */
 static bool s_have;        /* a pet/todo has arrived since boot */
 static bool s_is_open;
+static bool s_on_feed;     /* the Updates tab is showing */
 static bool s_swiped;      /* this press became a swipe: LVGL still sends CLICKED to the row it started on */
 static const char *s_note; /* a one-off line in the header, until the next redraw */
 static uint32_t s_opened_ms;   /* lv_tick when the list opened */
@@ -75,6 +80,8 @@ static void draw_count(void)
 {
     if (s_note) {
         lv_label_set_text(s_count, s_note);
+    } else if (s_on_feed) {
+        lv_label_set_text(s_count, feed_summary());
     } else if (!s_have) {
         lv_label_set_text(s_count, "");
     } else if (s_count_all > s_n) {   /* more on the bridge than the box was sent */
@@ -94,7 +101,7 @@ static void draw(void)
             lv_obj_add_flag(s_row[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
-    if (s_n == 0) {
+    if (s_n == 0 && !s_on_feed) {
         lv_label_set_text(s_empty, !s_have ? "No list from the bridge yet." :
                                    "Nothing on the list.\n\nAdd one on the Mac:\npython3 bridge/todo.py add \"...\"");
         lv_obj_remove_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
@@ -102,6 +109,22 @@ static void draw(void)
         lv_obj_add_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
     }
     draw_count();
+}
+
+static void show_tab(bool feed)
+{
+    s_on_feed = feed;
+    lv_obj_set_style_text_color(s_tab_todo, feed ? C(dim) : C(accent), 0);
+    lv_obj_set_style_text_color(s_tab_feed, feed ? C(accent) : C(dim), 0);
+    if (feed) {
+        feed_draw();   /* the ages have moved on since the last pet/feed */
+        lv_obj_add_flag(s_list, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(s_feed, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_feed, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(s_list, LV_OBJ_FLAG_HIDDEN);
+    }
+    draw();
 }
 
 static void close_list(const char *why)
@@ -174,6 +197,15 @@ static void gesture_cb(lv_event_t *e)
     }
     if (d == LV_DIR_LEFT || d == LV_DIR_RIGHT) {
         close_list("swipe");
+    }
+}
+
+static void tab_cb(lv_event_t *e)
+{
+    bool feed = (bool)(intptr_t)lv_event_get_user_data(e);
+    if (!s_swiped && s_is_open && feed != s_on_feed) {
+        ESP_LOGI(TAG, "tab: %s", feed ? "Updates" : "To do");
+        show_tab(feed);
     }
 }
 
@@ -310,10 +342,18 @@ void todo_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_obj_add_event_cb(s_root, press_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s_root, gesture_cb, LV_EVENT_GESTURE, NULL);   /* swipes on the rows bubble up to here */
 
-    lv_obj_t *title = lv_label_create(s_root);
-    lv_label_set_text(title, "To do");
-    style_text(title, &lv_font_montserrat_32, C(accent));
-    lv_obj_set_pos(title, 32, 30);
+    /* The tabs: labels with room around them for a finger */
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *tab = lv_label_create(s_root);
+        lv_label_set_text(tab, i ? "Updates" : "To do");
+        style_text(tab, &lv_font_montserrat_32, C(dim));
+        lv_obj_add_flag(tab, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_ext_click_area(tab, 20);
+        lv_obj_set_pos(tab, i ? 200 : 32, 30);
+        lv_obj_add_event_cb(tab, press_cb, LV_EVENT_PRESSED, NULL);
+        lv_obj_add_event_cb(tab, tab_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        *(i ? &s_tab_feed : &s_tab_todo) = tab;
+    }
     s_count = lv_label_create(s_root);
     style_text(s_count, &lv_font_montserrat_24, C(dim));
     lv_obj_set_pos(s_count, 32, 76);
@@ -331,6 +371,10 @@ void todo_create(lv_obj_t *parent, const pet_def_t *pet)
     for (int i = 0; i < TODO_MAX; i++) {
         make_row(i);
     }
+
+    s_feed = feed_create(s_root, pet, press_cb);
+    lv_obj_set_size(s_feed, 656, 572);
+    lv_obj_set_pos(s_feed, 32, 128);
 
     s_empty = lv_label_create(s_root);
     style_text(s_empty, &lv_font_montserrat_24, C(dim));
@@ -359,7 +403,7 @@ void todo_create(lv_obj_t *parent, const pet_def_t *pet)
 
     s_idle = lv_timer_create(idle_cb, PET_TODO_IDLE_MS, NULL);
     lv_timer_pause(s_idle);
-    draw();
+    show_tab(false);
 }
 
 void todo_open(void)
@@ -371,8 +415,9 @@ void todo_open(void)
     s_is_open = true;
     s_swiped = true;   /* the swipe that opened the list is still under the finger: its release clicks nothing */
     s_opened_ms = lv_tick_get();
-    draw();
+    show_tab(false);   /* always opens on To do */
     lv_obj_scroll_to_y(s_list, 0, LV_ANIM_OFF);
+    lv_obj_scroll_to_y(s_feed, 0, LV_ANIM_OFF);
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_root);
     lv_timer_reset(s_idle);

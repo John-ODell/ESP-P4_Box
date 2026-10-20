@@ -175,6 +175,27 @@ static void snack_landed(lv_anim_t *a)
     fill_play();
 }
 
+void face_merged(int count, int number)
+{
+    play_add(PET_HAPPY_MERGE * (count < 3 ? count : 3), "PR merged");
+    if (!s_banner_sticky) {   /* a waiting level-up keeps its celebration loop and banner */
+        if (s_stats_timer) {   /* the banner draws under the stats overlay: put it away */
+            lv_timer_delete(s_stats_timer);
+            s_stats_timer = NULL;
+        }
+        show(s_stats, false);
+        anim_play(PET_REACT_CELEBRATE, false);
+        char text[40];
+        if (count == 1) {
+            snprintf(text, sizeof text, "Merged #%d!", number);
+        } else {
+            snprintf(text, sizeof text, "Merged %d PRs!", count);
+        }
+        banner(text, GOOD_COLOR, false);
+    }
+    fill_play();
+}
+
 /* Where the pet's ink is, from its resting frames (every mood), so touches on blank sprite corners still open the
  * menu. Falls back to the whole sprite if every resting frame is blank. */
 static void find_pet_box(void)
@@ -294,7 +315,9 @@ void face_create(lv_obj_t *parent, const pet_def_t *pet)
     lv_label_set_text(s_link, "booting");
     s_status = label(parent, &lv_font_montserrat_16, DIM_COLOR, LV_ALIGN_BOTTOM_MID, 0, -24);
 
-    s_banner = label(parent, &lv_font_montserrat_32, GOOD_COLOR, LV_ALIGN_TOP_MID, 0, 130);
+    /* Just above today's line, under the pet: up top it was drawn over by the speech bubble, which is up whenever a
+     * session waits, so a merge or level-up said nothing */
+    s_banner = label(parent, &lv_font_montserrat_32, GOOD_COLOR, LV_ALIGN_BOTTOM_MID, 0, -104);
     show(s_banner, false);
 
     /* Speech bubble, top right over the character's shoulder, hidden until an AI session waits. Created before the

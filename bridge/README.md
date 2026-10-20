@@ -97,6 +97,7 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/todo/tick` | box, when a tap ticks or unticks an item | no | `{id, done}` |
 | `pet/feed` | bridge, every poll when it changed (#92) | yes | `{v, items: [{t, k, r, x, n?}]}` |
 | `pet/feed/add` | box, when a tap puts an open PR or issue on the to-do list (#104) | no | `{r, n}` |
+| `pet/merged` | bridge, on a poll that finds PRs newly merged (#106) | no | `{v, count, items: [{r, n, x}]}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
 it renders the numbers but does not re-run the celebrations in `events`. Updates over the LAN (#16) add two more
@@ -275,6 +276,11 @@ that line in its last feed and adds a to-do with GitHub's title, by "box", and t
 follows GitHub like any other ref. If an open item already has that ref (a plain `#74` counts when it means the same
 repo), nothing is added and the list is published again, so the box can say it is there. A line the bridge no longer
 has, a closed one, or a malformed message is logged and dropped.
+
+When a poll finds one of your PRs merged after the bridge started and not sent yet, the bridge sends it on
+`pet/merged` (#106): `count` is how many, `items` the first 5. Nothing merged before a start is celebrated, so a restart
+celebrates nothing; a merge made while GitHub could not be reached goes with the next poll that sees it; each is sent
+once, even if it leaves the feed and comes back. A failed send is tried again next poll.
 
 ## Known limits
 

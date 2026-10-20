@@ -34,6 +34,7 @@
 #define PET_HAPPY_FLOOR      20      /* drift never goes below this */
 #define PET_HAPPY_DECAY_MIN  15      /* one point down per this many awake minutes (asleep: no drift) */
 #define PET_HAPPY_FEED       8       /* per snack */
+#define PET_HAPPY_MERGE      5       /* per pull request merged (#106), at most 3 counted at once */
 #define PET_PLAY_SAVE_MIN    10      /* drift is saved to NVS at most this often; feeding saves at once */
 #define PET_SNACK_SCALE      4       /* the falling fish: 48x40 art drawn 4x */
 #define PET_STROKE_PX        150     /* finger travel over the pet per stroke: one heart, one bit of happiness */

@@ -14,6 +14,7 @@
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
+#include "cJSON.h"
 #include "face.h"
 #include "menu.h"
 #include "q20.h"
@@ -353,6 +354,39 @@ static void on_notify(const char *payload, size_t len, bool retained)
     bsp_display_unlock();
 }
 
+static void on_merged(const char *payload, size_t len)
+{
+    cJSON *j = cJSON_ParseWithLength(payload, len);
+    const cJSON *items = cJSON_GetObjectItem(j, "items"), *total = cJSON_GetObjectItem(j, "count");
+    int count = 0;   /* the PRs in `items`; `count` says how many in all when there were more than fit */
+    const cJSON *el;
+    if (cJSON_IsArray(items)) {
+        cJSON_ArrayForEach(el, items) {
+            count += cJSON_IsObject(el);
+        }
+    }
+    if (count > 0 && cJSON_IsNumber(total) && total->valuedouble > count && total->valuedouble <= 999) {
+        count = (int)total->valuedouble;
+    }
+    const cJSON *n = count > 0 ? cJSON_GetObjectItem(cJSON_GetArrayItem(items, 0), "n") : NULL;
+    int number = cJSON_IsNumber(n) && n->valuedouble >= 1 && n->valuedouble <= 9999999 ? (int)n->valuedouble : 0;
+    cJSON_Delete(j);
+    if (count <= 0 || (count == 1 && number == 0)) {
+        ESP_LOGW(TAG, "pet/merged not understood (%u bytes)", (unsigned)len);
+        return;
+    }
+    ESP_LOGI(TAG, "merged: %d PR%s, first #%d", count, count == 1 ? "" : "s", number);
+    if (bsp_display_lock(500)) {
+        face_merged(count, number);
+        if (!sched_is_night()) {   /* an overnight merge cheers the pet, but does not light the room */
+            sched_activity("PR merged");   /* wake the screen: something happened */
+        }
+        bsp_display_unlock();
+    } else {
+        ESP_LOGW(TAG, "could not take the display lock; merge not celebrated");
+    }
+}
+
 static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool retained)
 {
     if (strcmp(topic, PET_TOPIC_STATE) == 0) {
@@ -398,6 +432,8 @@ static void on_mqtt_msg(const char *topic, const char *payload, size_t len, bool
         } else {
             ESP_LOGW(TAG, "could not take the display lock; to-do list not drawn");
         }
+    } else if (strcmp(topic, PET_TOPIC_MERGED) == 0 && !retained) {   /* PRs just merged: the pet cheers (#106) */
+        on_merged(payload, len);
     } else if (strcmp(topic, PET_TOPIC_FEED) == 0) {   /* the Updates tab of the list (#92) */
         if (bsp_display_lock(500)) {
             feed_on_msg(payload, len);

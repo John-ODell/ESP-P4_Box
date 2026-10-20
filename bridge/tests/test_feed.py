@@ -1,6 +1,6 @@
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from petbrain.feed import BUDGET, MAX_TEXT, RECENT_DAYS, SHOWN, TOPIC_FEED, Feed, build, fetch_github, payload
 from petbrain.todo import Todo
@@ -143,6 +143,81 @@ class AddTests(unittest.TestCase):
         feed.update()
         with self.assertLogs("bridge.feed", "WARNING"):
             self.assertIsNone(feed.add(b'{"r":"ESP-P4_Box","n":73}'))
+
+
+class MergedTests(unittest.TestCase):
+    """The pet celebrates a merge (#106)."""
+
+    def setUp(self):
+        self.sent, self.now = [], NOW   # the bridge starts at 01:30
+        self.answer = viewer(prs=[pr(70, "Old", ts(0), merged=ts(0, 30)), pr(73, "Open", ts(1))])
+        self.feed = Feed(lambda t, p, r: self.sent.append((t, json.loads(p), r)), lambda since: self.answer,
+                         now=lambda: self.now)
+
+    def merged(self):
+        return [(p["items"], r) for t, p, r in self.sent if t == "pet/merged"]
+
+    def test_nothing_merged_before_the_start_is_celebrated(self):
+        self.feed.update()
+        self.assertEqual(self.merged(), [])
+
+    def test_a_merge_after_the_start_counts_even_when_the_first_poll_failed(self):
+        def broken(since):
+            raise OSError("offline")
+        feed = Feed(lambda t, p, r: self.sent.append((t, json.loads(p), r)), broken, now=lambda: self.now)
+        with self.assertRaises(OSError):
+            feed.update()
+        feed._fetch = lambda since: self.answer
+        self.answer["pullRequests"]["nodes"][1] = pr(73, "Open", ts(1), merged=ts(1, 40))
+        self.now += timedelta(hours=5)   # a long gap: a sleeping Mac
+        feed.update()
+        self.assertEqual([[i["n"] for i in items] for items, r in self.merged()], [[73]])
+
+    def test_a_pr_merged_since_the_last_poll_is_sent_once_not_retained(self):
+        self.feed.update()
+        self.answer["pullRequests"]["nodes"][1] = pr(73, "Open", ts(1), merged=ts(1, 40))
+        self.feed.update()
+        self.feed.update()
+        self.assertEqual(self.merged(), [([{"r": "ESP-P4_Box", "n": 73, "x": "#73 Open"}], False)])
+        self.assertEqual([p["count"] for t, p, r in self.sent if t == "pet/merged"], [1])
+
+    def test_an_old_merge_coming_back_into_the_feed_is_not_news(self):
+        self.feed.update()
+        self.answer["pullRequests"]["nodes"].append(pr(50, "Long ago", ts(0, day=19), merged=ts(1, day=19)))
+        self.feed.update()
+        self.assertEqual(self.merged(), [])
+
+    def test_many_merges_send_the_count_and_the_first_five(self):
+        self.answer["pullRequests"]["nodes"] = [pr(80 + i, "x", ts(1), merged=ts(1, 40 + i)) for i in range(7)]
+        self.feed.update()
+        (msg,) = [p for t, p, r in self.sent if t == "pet/merged"]
+        self.assertEqual((msg["count"], len(msg["items"])), (7, 5))
+
+    def test_a_failed_send_is_tried_again_next_poll(self):
+        self.answer["pullRequests"]["nodes"][1] = pr(73, "Open", ts(1), merged=ts(1, 40))
+        calls = []
+
+        def flaky(topic, text, retain):
+            calls.append(topic)
+            if topic == "pet/merged" and calls.count("pet/merged") == 1:
+                raise OSError("broker gone")
+            self.sent.append((topic, json.loads(text), retain))
+        self.feed._publish = flaky
+        with self.assertLogs("bridge.feed", "WARNING"):
+            self.feed.update()
+        self.assertIn("pet/feed", calls)   # the feed still went out
+        self.feed.update()
+        self.assertEqual(len(self.merged()), 1)
+
+    def test_a_merge_that_left_the_feed_and_came_back_is_not_sent_again(self):
+        self.feed.update()
+        self.answer["pullRequests"]["nodes"][1] = pr(73, "Open", ts(1), merged=ts(1, 40))
+        self.feed.update()
+        gone = self.answer["pullRequests"]["nodes"].pop(1)
+        self.feed.update()
+        self.answer["pullRequests"]["nodes"].append(gone)
+        self.feed.update()
+        self.assertEqual(len(self.merged()), 1)
 
 
 class FeedTests(unittest.TestCase):

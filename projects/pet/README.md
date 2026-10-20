@@ -62,6 +62,12 @@ box was sent. Drag up and down to scroll. A swipe left or right on the list, Clo
 (`PET_TODO_IDLE_MS`) goes back to the pet. Items are added on the Mac with `python3 bridge/todo.py add`. Like the
 games it takes every touch and keeps the screen bright.
 
+The list screen opens on its **To do** tab; tap **Updates** for the GitHub feed (#92, `main/feed.c`) from the retained
+`pet/feed`: up to 10 rows, newest first, each with what happened in the pack's colours (Merged and Issue done in
+`good`, PR opened and Issue opened in `accent`, Issue dropped in `warn`, PR closed in `dim`, Committed in `ink`), the title,
+and the repo with how long ago ("3h ago"; commits "today", "yesterday", "2d ago"). The ages show once the clock has
+synced. The rows are not buttons: drag to scroll, and the same swipe, Close or idle timeout goes back to the pet.
+
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a
 touch (`PET_DIM_AFTER_S`) it dims to 75% of full (`PET_DIM_PERCENT`; try 50 if that is still too bright). After 10
@@ -188,6 +194,7 @@ Console is UART0 at 115200. Layout:
 - `main/says.c`: Pet Says, the memory game, over the face with the pet drawn small in the middle.
 - `main/q20.c`: 20 Questions over the face: shows the bridge's turns from `pet/q20/ask`, sends the taps on `pet/q20`.
 - `main/todo.c`: the to-do list over the face: draws `pet/todo`, sends taps on `pet/todo/tick`.
+- `main/feed.c`: the list screen's Updates tab: draws `pet/feed`.
 - `main/play.c`: happiness and snacks, saved in NVS. Each stroke adds `PET_HAPPY_PET` (3), one less for every
   `PET_PET_FADE` (4) recent strokes, down to nothing; each minute forgets two recent strokes (at most 12 are kept),
   so the gain is back to full after 6 minutes' rest. Pet Says adds happiness with `play_says_done()`.

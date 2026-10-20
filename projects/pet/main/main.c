@@ -357,8 +357,17 @@ static void on_notify(const char *payload, size_t len, bool retained)
 static void on_merged(const char *payload, size_t len)
 {
     cJSON *j = cJSON_ParseWithLength(payload, len);
-    const cJSON *items = cJSON_GetObjectItem(j, "items");
-    int count = cJSON_IsArray(items) ? cJSON_GetArraySize(items) : 0;
+    const cJSON *items = cJSON_GetObjectItem(j, "items"), *total = cJSON_GetObjectItem(j, "count");
+    int count = 0;   /* the PRs in `items`; `count` says how many in all when there were more than fit */
+    const cJSON *el;
+    if (cJSON_IsArray(items)) {
+        cJSON_ArrayForEach(el, items) {
+            count += cJSON_IsObject(el);
+        }
+    }
+    if (count > 0 && cJSON_IsNumber(total) && total->valuedouble > count && total->valuedouble <= 999) {
+        count = (int)total->valuedouble;
+    }
     const cJSON *n = count > 0 ? cJSON_GetObjectItem(cJSON_GetArrayItem(items, 0), "n") : NULL;
     int number = cJSON_IsNumber(n) && n->valuedouble >= 1 && n->valuedouble <= 9999999 ? (int)n->valuedouble : 0;
     cJSON_Delete(j);
@@ -369,7 +378,9 @@ static void on_merged(const char *payload, size_t len)
     ESP_LOGI(TAG, "merged: %d PR%s, first #%d", count, count == 1 ? "" : "s", number);
     if (bsp_display_lock(500)) {
         face_merged(count, number);
-        sched_activity("PR merged");   /* wake the screen: something happened */
+        if (!sched_is_night()) {   /* an overnight merge cheers the pet, but does not light the room */
+            sched_activity("PR merged");   /* wake the screen: something happened */
+        }
         bsp_display_unlock();
     } else {
         ESP_LOGW(TAG, "could not take the display lock; merge not celebrated");

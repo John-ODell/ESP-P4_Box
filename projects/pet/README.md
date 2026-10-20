@@ -72,9 +72,10 @@ says "Adding #74 to To do...", then "On To do now: #74" when the bridge's next `
 To do" (refs compared without case, as GitHub's names are). With no answer in 15 s (the bridge dropped it, or the list
 is cut before the new item) it says "No word from the bridge about #74". Merged, closed and commit rows take no tap.
 
-**Merges** (#106): when the bridge's poll finds one of your pull requests just merged (`pet/merged`), the pet bounces,
-the banner says "Merged #103!" (or "Merged 3 PRs!"), happiness goes up by `PET_HAPPY_MERGE` (5) for each, three at
-most, and the screen wakes. A level-up waiting for a tap keeps its banner; the happiness still counts.
+**Merges** (#106): when the bridge's poll finds one of your pull requests just merged (`pet/merged`), the pet plays
+its celebration, the banner says "Merged #103!" (or "Merged 3 PRs!"), happiness goes up by `PET_HAPPY_MERGE` (5) for
+each, three at most, and the screen wakes, except at night. The stats overlay is put away so the banner shows; under
+the list screen or a game only the happiness shows. A level-up waiting for a tap keeps its banner.
 
 **Backlight** is an idle timer, not a clock schedule (all settings in `main/pet_config.h`). Full brightness
 (`PET_BRIGHT_FULL`, 60%) after boot, after any touch, and whenever the pet's state changes. After 30 s without a

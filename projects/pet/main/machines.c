@@ -3,7 +3,8 @@
  * first row is the bridge: up, with how long and how fresh its GitHub poll is, or quiet when nothing has come for
  * QUIET_S (the retained message is then the bridge's last word). Then one row per machine, down first: a mark (a tick
  * in the good colour, a cross in the warning colour, a question mark for a name Tailscale does not know), the name,
- * and "online" or when it was last seen. If the bridge could not ask Tailscale, that is said instead of the machines. */
+ * and "online" or when it was last seen. While the bridge is quiet the machine rows are its last word, so they are
+ * dimmed and say when. If the bridge could not ask Tailscale, that is said instead of the machines. */
 #include "machines.h"
 #include <assert.h>
 #include <stdbool.h>
@@ -34,11 +35,11 @@ typedef struct {
 
 typedef struct {
     machine_t m[MACHINES_MAX];
-    int n, down;
+    int n, down, unknown;
     int64_t at, up, poll, every;   /* 0: not sent */
     bool have;
     char err[84];
-    char summary[48];
+    char summary[64];   /* a 32-character name and " is not on the tailnet" */
 } machines_t;
 
 static const pet_def_t *s_pet;
@@ -116,7 +117,8 @@ void machines_draw(void)
         set_row(bridge, LV_SYMBOL_CLOSE, C(warn), "Bridge", detail, C(warn));
     } else {
         span(a, sizeof a, (int64_t)now - s_d->up);
-        bool late = s_d->poll > 0 && s_d->every > 0 && (int64_t)now - s_d->poll > 2 * s_d->every + 60;
+        /* polls are `every` apart plus the cycle's own work: three intervals without one is no slow cycle */
+        bool late = s_d->poll > 0 && s_d->every > 0 && (int64_t)now - s_d->poll > 3 * s_d->every;
         if (s_d->poll <= 0) {
             snprintf(detail, sizeof detail, "Up %s, no GitHub poll yet", a);
         } else {
@@ -126,6 +128,11 @@ void machines_draw(void)
         set_row(bridge, late ? LV_SYMBOL_WARNING : LV_SYMBOL_OK, late ? C(warn) : C(good), "Bridge", detail,
                 late ? C(warn) : C(dim));
     }
+    bool quiet = synced && bridge_quiet(now);
+    char said[24] = "";
+    if (quiet) {
+        clock_text(said, sizeof said, s_d->at, now);
+    }
     for (int i = 0; i < MACHINES_MAX; i++) {
         lv_obj_t *row = lv_obj_get_child(s_box, 1 + i);
         if (i >= s_d->n) {
@@ -134,11 +141,12 @@ void machines_draw(void)
         }
         const machine_t *m = &s_d->m[i];
         if (m->state == M_UP) {
-            set_row(row, LV_SYMBOL_OK, C(good), m->name, "Online", C(dim));
+            snprintf(detail, sizeof detail, quiet ? "Online at %s" : "Online", said);
+            set_row(row, LV_SYMBOL_OK, quiet ? C(dim) : C(good), m->name, detail, C(dim));
         } else if (m->state == M_DOWN) {
             feed_ago(a, sizeof a, m->t, now);
             snprintf(detail, sizeof detail, a[0] ? "Offline, last seen %s" : "Offline", a);
-            set_row(row, LV_SYMBOL_CLOSE, C(warn), m->name, detail, C(warn));
+            set_row(row, LV_SYMBOL_CLOSE, quiet ? C(dim) : C(warn), m->name, detail, quiet ? C(dim) : C(warn));
         } else {
             set_row(row, "?", C(dim), m->name, "Not on the tailnet", C(dim));
         }
@@ -167,16 +175,25 @@ const char *machines_summary(void)
     if (s_d->err[0]) {
         return "Could not ask Tailscale";
     }
-    if (s_d->down == 0) {
-        snprintf(s_d->summary, sizeof s_d->summary, s_d->n ? "All up" : "");
-    } else if (s_d->down == 1) {
-        for (int i = 0; i < s_d->n; i++) {
-            if (s_d->m[i].state == M_DOWN) {
-                snprintf(s_d->summary, sizeof s_d->summary, "%s is down", s_d->m[i].name);
-            }
+    int down = s_d->down, unknown = s_d->unknown, known = s_d->n - unknown;
+    const char *one = "";   /* the name, when exactly one is down or unknown */
+    for (int i = 0; i < s_d->n && down + unknown == 1; i++) {
+        if (s_d->m[i].state != M_UP) {
+            one = s_d->m[i].name;
         }
+    }
+    if (down + unknown == 0) {
+        snprintf(s_d->summary, sizeof s_d->summary, s_d->n ? "All up" : "");
+    } else if (unknown == 0 && down == 1) {
+        snprintf(s_d->summary, sizeof s_d->summary, "%s is down", one);
+    } else if (unknown == 0) {   /* a name Tailscale does not know is neither up nor down */
+        snprintf(s_d->summary, sizeof s_d->summary, "%d of %d down", down, known);
+    } else if (down == 0 && unknown == 1) {
+        snprintf(s_d->summary, sizeof s_d->summary, "%s is not on the tailnet", one);
+    } else if (down == 0) {
+        snprintf(s_d->summary, sizeof s_d->summary, "%d not on the tailnet", unknown);
     } else {
-        snprintf(s_d->summary, sizeof s_d->summary, "%d of %d down", s_d->down, s_d->n);
+        snprintf(s_d->summary, sizeof s_d->summary, "%d down, %d not on the tailnet", down, unknown);
     }
     return s_d->summary;
 }
@@ -190,7 +207,7 @@ void machines_on_msg(const char *payload, size_t len)
         cJSON_Delete(j);
         return;
     }
-    int n = 0, down = 0;
+    int n = 0, down = 0, unknown = 0;
     const cJSON *el;
     cJSON_ArrayForEach(el, items) {
         const cJSON *name = cJSON_GetObjectItem(el, "n"), *s = cJSON_GetObjectItem(el, "s");
@@ -202,20 +219,24 @@ void machines_on_msg(const char *payload, size_t len)
         m->t = num(el, "t");
         snprintf(m->name, sizeof m->name, "%s", name->valuestring);
         down += m->state == M_DOWN;
+        unknown += m->state == M_UNKNOWN;
     }
     const cJSON *err = cJSON_GetObjectItem(j, "err");
+    const char *why = cJSON_IsString(err) ? err->valuestring : "";
+    bool changed = !s_d->have || n != s_d->n || down != s_d->down || unknown != s_d->unknown ||
+                   strncmp(why, s_d->err, sizeof s_d->err - 1) != 0;
     s_d->n = n;
     s_d->down = down;
+    s_d->unknown = unknown;
     s_d->at = num(j, "at");
     s_d->up = num(j, "up");
     s_d->poll = num(j, "poll");
     s_d->every = num(j, "every");
-    snprintf(s_d->err, sizeof s_d->err, "%s", cJSON_IsString(err) ? err->valuestring : "");
-    bool was = s_d->have;
+    snprintf(s_d->err, sizeof s_d->err, "%s", why);
     s_d->have = true;
     cJSON_Delete(j);
-    if (!was || down || s_d->err[0]) {   /* every minute: log only what is worth a line */
-        ESP_LOGI(TAG, "machines: %d, %d down%s%s", n, down, s_d->err[0] ? ", " : "", s_d->err);
+    if (changed) {   /* it comes every minute: log only a change */
+        ESP_LOGI(TAG, "machines: %d, %d down, %d unknown%s%s", n, down, unknown, s_d->err[0] ? ", " : "", s_d->err);
     }
     machines_draw();
 }

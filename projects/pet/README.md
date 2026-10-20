@@ -87,11 +87,14 @@ header says "2 failing" (", some still running" when some are), "Nothing failing
 "Nothing failing" when some were cancelled or skipped. Drag to scroll; the rows take no tap.
 
 **Machines** (#108, `main/machines.c`) draws the retained `pet/machines`, which the bridge sends every minute. The first
-row is the bridge: a tick and "Up 3h, GitHub polled 4m ago", a warning when the poll is more than two intervals late,
-or a cross and "Quiet since 8:12 pm: is the Mac awake?" when nothing has come for 3 minutes. Then one row per machine
-on Tailscale, down first: a tick and "Online", a cross and "Offline, last seen 3h ago" in `warn`, or a question mark
-and "Not on the tailnet". If the bridge could not ask Tailscale, the reason shows under the bridge's row instead. The
-header says "All up", "wordell is down", "2 of 3 down" or "The bridge has gone quiet".
+row is the bridge: a tick and "Up 3h, GitHub polled 4m ago", a warning and ": overdue" when no poll has worked for
+three intervals, or a cross and "Quiet since 8:12 pm: is the Mac awake?" when nothing has come for 3 minutes. Then one
+row per machine on Tailscale, down first: a tick and "Online", a cross and "Offline, last seen 3h ago" in `warn`, or a
+question mark and "Not on the tailnet". While the bridge is quiet those rows are its last word, so they are dimmed and
+say "Online at 8:12 pm". If the bridge could not ask Tailscale, the reason shows under the bridge's row instead. The
+header says "All up", "wordell is down", "2 of 3 down", "pi9 is not on the tailnet" (or "2 not on the tailnet", "1
+down, 1 not on the tailnet"; a name Tailscale does not know counts as neither up nor down), "Could not ask Tailscale"
+or "The bridge has gone quiet".
 
 **Merges** (#106): when the bridge's poll finds one of your pull requests just merged (`pet/merged`), the pet plays
 its celebration, the banner says "Merged #103!" (or "Merged 3 PRs!"), happiness goes up by `PET_HAPPY_MERGE` (5) for

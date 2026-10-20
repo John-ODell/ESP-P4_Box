@@ -1,6 +1,8 @@
 import json
+import subprocess
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from petbrain.machines import STALE_DAYS, TOPIC_MACHINES, Machines, machines, tailscale_status
 
@@ -34,6 +36,26 @@ class MachinesTests(unittest.TestCase):
             {"n": "wg000655", "s": "down", "t": NOW - (STALE_DAYS + 1) * 86400},
             {"n": "wordell", "s": "down", "t": NOW - 3600}, {"n": "pi9", "s": "unknown", "t": None}])
 
+    def test_names_match_hostnames_and_this_mac_and_count_once(self):
+        tailnet = dict(TAILNET, Self={"HostName": "Johns-MacBook-Pro", "DNSName": "johns-macbook-pro.tail1234.ts.net.",
+                                      "OS": "macOS", "Online": False, "LastSeen": "0001-01-01T00:00:00Z"})
+        self.assertEqual(machines(tailnet, ["wordell", "WORDELL", "JohnsDesktop", "johnsdesktop", "johns-macbook-pro"],
+                                  now=NOW), [
+            {"n": "wordell", "s": "down", "t": NOW - 3600}, {"n": "johns-macbook-pro", "s": "up", "t": None},
+            {"n": "johnsdesktop", "s": "up", "t": None}])
+        self.assertNotIn("johns-macbook-pro", [m["n"] for m in machines(tailnet, now=NOW)])   # the bridge has its row
+
+    def test_a_machine_once_listed_stays_listed(self):
+        later = NOW + STALE_DAYS * 86400
+        self.assertEqual([m["n"] for m in machines(TAILNET, now=later)], ["johnsdesktop"])
+        self.assertEqual([m["n"] for m in machines(TAILNET, now=later, keep={"wordell"})], ["wordell", "johnsdesktop"])
+
+        clock = [NOW]
+        m = Machines(lambda t, p, r: None, lambda: TAILNET, now=lambda: clock[0])
+        m.update()
+        clock[0] = later
+        self.assertEqual([i["n"] for i in m.update()["items"]], ["wordell", "johnsdesktop"])
+
     def test_odd_peers_are_skipped(self):
         self.assertEqual(machines({"Peer": {"a": None, "b": {"HostName": ""}}}, now=NOW), [])
         self.assertEqual(machines({}, now=NOW), [])
@@ -50,6 +72,41 @@ class StatusTests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"BackendState": "Stopped"}))
         with self.assertRaisesRegex(RuntimeError, "Stopped"):
             tailscale_status(stopped)
+
+    def test_answers_that_are_not_a_status_say_so_plainly(self):
+        def answer(returncode=0, stdout="", stderr=""):
+            return lambda args, **kw: SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+        # the app binary run without a login session's environment, as launchd or cron would
+        with self.assertRaisesRegex(RuntimeError, "^The Tailscale GUI failed to start$"):
+            tailscale_status(answer(stdout="\nThe Tailscale GUI failed to start\n"), cli="tailscale")
+        with self.assertRaisesRegex(RuntimeError, "^exit 1$"):
+            tailscale_status(answer(1, stderr="\n"), cli="tailscale")
+        with self.assertRaisesRegex(RuntimeError, "^no answer$"):
+            tailscale_status(answer(), cli="tailscale")
+
+        def hangs(args, **kw):
+            raise subprocess.TimeoutExpired(args, 10)
+        with self.assertRaisesRegex(RuntimeError, "^no answer in 10 s$"):
+            tailscale_status(hangs, cli="tailscale")
+
+        def missing(args, **kw):
+            raise FileNotFoundError(2, "No such file", args[0])
+        with self.assertRaisesRegex(RuntimeError, "^could not run tailscale$"):
+            tailscale_status(missing, cli="/gone/tailscale")
+
+    def test_tailscale_is_found_off_the_path(self):
+        seen = []
+
+        def run(args, **kw):
+            seen.append(args[0])
+            return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"BackendState": "Running"}))
+        with mock.patch("shutil.which", return_value=None), \
+                mock.patch("os.path.exists", side_effect=lambda p: p == "/usr/local/bin/tailscale"):
+            tailscale_status(run)
+        self.assertEqual(seen, ["/usr/local/bin/tailscale"])
+        with mock.patch("shutil.which", return_value=None), mock.patch("os.path.exists", return_value=False), \
+                self.assertRaisesRegex(RuntimeError, "^not installed$"):
+            tailscale_status(run)
 
 
 class PublishTests(unittest.TestCase):

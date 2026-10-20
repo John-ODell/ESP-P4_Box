@@ -311,11 +311,15 @@ be reached the log says "CI not updated" and the box keeps the last list.
 The box's Machines tab (#108, `petbrain/machines.py`) says whether the things the pet depends on are up. Once a minute,
 on its own thread, the bridge runs `tailscale status --json` and publishes retained on `pet/machines`: when it sent it
 (`at`, so the box can tell the bridge has gone quiet), when it started (`up`), its last good GitHub poll (`poll`) and
-the poll interval (`every`), and one item per machine: `n` the hostname, `s` "up", "down" or "unknown" (named but not on
-the tailnet), `t` when it was last seen. The machines are the hostnames in `PET_MACHINES` (comma separated, any case),
-for example `PET_MACHINES=wordell,johnsdesktop`; without it, every peer that is not a phone or tablet and was seen in
-the last 14 days. When Tailscale cannot be asked (not installed, stopped, logged out) the items are empty and `err` says
-why, and the box shows that instead of anything up or down.
+the poll interval (`every`), and one item per machine: `n` its MagicDNS name, `s` "up", "down" or "unknown" (named but
+not on the tailnet), `t` when it was last seen. The machines are the ones named in `PET_MACHINES` (comma separated, any
+case, by MagicDNS name or the machine's own hostname; this Mac counts too), for example
+`PET_MACHINES=wordell,johnsdesktop`. Without it, every other machine that is not a phone or tablet and was seen in the
+last 14 days, and one listed once stays listed until the bridge restarts, so a machine down for weeks does not quietly
+drop off; name the machines you care about if some come and go. When Tailscale cannot be asked (not installed,
+stopped, logged out, no answer) the items are empty and `err` says why, and the box shows that instead of anything up or
+down. The bridge finds `tailscale` on PATH, then at `/usr/local/bin` (the app's own command line), Homebrew's, and the
+app itself, so it works when started without a login shell's PATH.
 
 ## Known limits
 

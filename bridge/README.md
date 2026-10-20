@@ -97,6 +97,7 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/todo/tick` | box, when a tap ticks or unticks an item | no | `{id, done}` |
 | `pet/feed` | bridge, every poll when it changed (#92) | yes | `{v, items: [{t, k, r, x, n?}]}` |
 | `pet/feed/add` | box, when a tap puts an open PR or issue on the to-do list (#104) | no | `{r, n}` |
+| `pet/radar` | bridge, at most hourly when the counts changed (#105) | yes | `{v, since, c, p, r, i}` |
 | `pet/merged` | bridge, on a poll that finds PRs newly merged (#106) | no | `{v, count, items: [{r, n, x}]}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
@@ -281,6 +282,16 @@ When a poll finds one of your PRs merged after the bridge started and not sent y
 `pet/merged` (#106): `count` is how many, `items` the first 5. Nothing merged before a start is celebrated, so a restart
 celebrates nothing; a merge made while GitHub could not be reached goes with the next poll that sees it; each is sent
 once, even if it leaves the feed and comes back. A failed send is tried again next poll.
+
+## Contribution radar
+
+The box's Radar tab (#105, `petbrain/radar.py`) shows the four counts GitHub's profile radar is drawn from, for the last
+365 days: commits authored (`c`), pull requests opened (`p`), pull requests reviewed (`r`) and issues opened (`i`). They
+come from the REST search API, as the github-bullseye skill's `bullseye.sh` counts them, because GraphQL hides
+private-repo activity even from the owner. Search allows 30 calls a minute and the counts move slowly, so the bridge
+makes its four calls at most once an hour, whatever `PET_POLL_MIN` is, and publishes retained on `pet/radar` only when
+they changed. A failed search fails the whole radar (a partial one would point at the wrong slice); the log says "radar
+not updated" and the next poll tries again.
 
 ## Known limits
 

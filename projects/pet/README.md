@@ -83,7 +83,8 @@ header says which days are counted.
 **CI** (#107, `main/ci.c`) draws the retained `pet/ci`: the latest checks on your recently pushed repos, failures
 first. Each row has a mark (a cross in `warn` for a failure, arrows in `accent` while running, a tick in `good` for a
 pass, a dash otherwise), the repo, and the workflow with how long ago; a failure's workflow line is in `warn` too. The
-header says "2 failing", "Nothing failing, 1 running" or "All passing". Drag to scroll; the rows take no tap.
+header says "2 failing" (", some still running" when some are), "Nothing failing, 1 running", "All passing", or
+"Nothing failing" when some were cancelled or skipped. Drag to scroll; the rows take no tap.
 
 **Merges** (#106): when the bridge's poll finds one of your pull requests just merged (`pet/merged`), the pet plays
 its celebration, the banner says "Merged #103!" (or "Merged 3 PRs!"), happiness goes up by `PET_HAPPY_MERGE` (5) for

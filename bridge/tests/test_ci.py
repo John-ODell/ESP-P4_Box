@@ -18,13 +18,14 @@ def viewer(*repos):
 class StateTests(unittest.TestCase):
     def test_states(self):
         self.assertEqual(state(suite("COMPLETED", "SUCCESS")), "pass")
-        for c in ("FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED"):
+        for c in ("FAILURE", "TIMED_OUT", "STARTUP_FAILURE"):
             self.assertEqual(state(suite("COMPLETED", c)), "fail")
-        for c in ("SKIPPED", "NEUTRAL", "CANCELLED", "STALE", None):
+        for c in ("SKIPPED", "NEUTRAL", "CANCELLED", "STALE", "ACTION_REQUIRED", None):
             self.assertEqual(state(suite("COMPLETED", c)), "other")
         self.assertEqual(state(suite("IN_PROGRESS")), "run")
-        self.assertEqual(state(suite("QUEUED")), "run")   # queued with a workflow run: about to start
-        self.assertIsNone(state(suite("QUEUED", workflow=None, app="Claude")))   # an app with nothing to do
+        for s in ("QUEUED", "REQUESTED", "WAITING", "PENDING"):
+            self.assertEqual(state(suite(s)), "run")   # with a workflow run: about to start
+            self.assertIsNone(state(suite(s, workflow=None, app="Claude")))   # an app with nothing to do
 
 
 class BuildTests(unittest.TestCase):
@@ -37,6 +38,12 @@ class BuildTests(unittest.TestCase):
         self.assertEqual([(l["r"], l["w"], l["s"]) for l in lines], [
             ("b", "ci", "fail"), ("c", "ci", "run"), ("d", "Cloudflare Pages", "pass"), ("a", "ci", "pass")])
 
+    def test_only_the_newest_suite_of_a_workflow_counts(self):
+        lines = build(viewer(("a", [suite("COMPLETED", "FAILURE", "2026-10-20T09:00:00Z", workflow="nightly"),
+                                    suite("COMPLETED", "SUCCESS", "2026-10-20T10:00:00Z", workflow="nightly"),
+                                    suite("COMPLETED", "SUCCESS", "2026-10-20T08:00:00Z", workflow="ci")])))
+        self.assertEqual([(l["w"], l["s"]) for l in lines], [("nightly", "pass"), ("ci", "pass")])
+
     def test_odd_nodes_are_skipped(self):
         v = viewer(("a", [None, "x", suite("COMPLETED", "SUCCESS", at="bad"), suite("COMPLETED", "SUCCESS", app=None,
                                                                                  workflow=None)]))
@@ -45,7 +52,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(build({}), [])
 
     def test_payload_is_capped(self):
-        lines = build(viewer(*[(f"repo{i}", [suite("COMPLETED", "SUCCESS", workflow="w" * 60)]) for i in range(30)]))
+        lines = [{"r": '"' * 100, "w": '"' * 100, "s": "pass", "t": 1} for _ in range(30)]   # past what build makes
         text = payload(lines)
         self.assertLessEqual(len(text), BUDGET)
         self.assertLessEqual(len(json.loads(text)["items"]), SHOWN)

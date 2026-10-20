@@ -2,12 +2,14 @@
 
 One GraphQL call per poll: your 12 most recently pushed repos (not archived) and the check suites on the latest commit
 of each default branch. A suite that never started (status QUEUED with no run: apps installed on a repo with nothing to
-do there, such as a Pages integration without a project) is left out. Each suite that ran or is running is one line:
+do there, such as a Pages integration without a project) is left out. A commit can carry several suites of one
+workflow (a scheduled run, a rerun); only the newest counts. Each workflow that ran or is running is one line:
 
     pet/ci   bridge -> box, retained: {"v": 1, "items": [{"r": "ESP-P4_Box", "w": "ci", "s": "fail", "t": 1760990000}]}
 
-`r` the repo, `w` the workflow (or the app, for a suite with no workflow: "Cloudflare Pages"), `s` one of "fail",
-"run" (queued with a run, or in progress), "pass" or "other" (skipped, neutral, cancelled), `t` when the suite last
+`r` the repo, `w` the workflow (or the app, for a suite with no workflow: "Cloudflare Workers and Pages"), `s` one of
+"fail", "run" (queued with a run, or in progress), "pass" or "other" (skipped, neutral, cancelled, or waiting for an
+approval), `t` when the suite last
 changed. Failures first, then running, then the rest, newest first within each; at most SHOWN lines and BUDGET bytes.
 Published only when it changed. `fetch` is injected, so the tests run on canned answers.
 """
@@ -34,7 +36,7 @@ QUERY = """
   nodes { name defaultBranchRef { target { ... on Commit { checkSuites(last: 10) { nodes {
     status conclusion updatedAt app { name } workflowRun { workflow { name } } } } } } } } } } }
 """
-FAILED = ("FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED")
+FAILED = ("FAILURE", "TIMED_OUT", "STARTUP_FAILURE")   # ACTION_REQUIRED is a run waiting for approval: "other"
 ORDER = {"fail": 0, "run": 1, "pass": 2, "other": 3}
 
 
@@ -61,7 +63,7 @@ def state(suite: dict) -> str | None:
 
 def build(viewer: dict) -> list[dict]:
     """The CI lines from the query's `viewer`, in the order the box shows them, all of them (payload cuts)."""
-    out = []
+    newest = {}   # (repo, name) -> line: GitHub lists suites oldest first, so the last one wins
     for repo in ((viewer.get("repositories") or {}).get("nodes") or []):
         if not isinstance(repo, dict) or not _name(repo.get("name")):
             continue
@@ -74,7 +76,8 @@ def build(viewer: dict) -> list[dict]:
             name = _name((run.get("workflow") or {}).get("name")) or _name((suite.get("app") or {}).get("name"))
             if s is None or t is None or not name:
                 continue
-            out.append({"r": _name(repo["name"]), "w": name, "s": s, "t": t})
+            newest[(_name(repo["name"]), name)] = {"r": _name(repo["name"]), "w": name, "s": s, "t": t}
+    out = list(newest.values())
     out.sort(key=lambda l: (ORDER[l["s"]], -l["t"]))
     return out
 

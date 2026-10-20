@@ -32,7 +32,7 @@ typedef struct {
 
 typedef struct {
     line_t lines[CI_MAX];
-    int n, fails, runs;
+    int n, fails, runs, passes;
     bool have;
     char summary[48];
 } ci_t;
@@ -90,8 +90,8 @@ const char *ci_summary(void)
                  s_ci->runs ? ", some still running" : "");
     } else if (s_ci->runs > 0) {
         snprintf(s_ci->summary, sizeof s_ci->summary, "Nothing failing, %d running", s_ci->runs);
-    } else {
-        snprintf(s_ci->summary, sizeof s_ci->summary, "All passing");
+    } else {   /* a cancelled or skipped run is not a pass */
+        snprintf(s_ci->summary, sizeof s_ci->summary, s_ci->passes == s_ci->n ? "All passing" : "Nothing failing");
     }
     return s_ci->summary;
 }
@@ -105,7 +105,7 @@ void ci_on_msg(const char *payload, size_t len)
         cJSON_Delete(j);
         return;
     }
-    int n = 0, fails = 0, runs = 0;
+    int n = 0, fails = 0, runs = 0, passes = 0;
     const cJSON *el;
     cJSON_ArrayForEach(el, items) {
         const cJSON *r = cJSON_GetObjectItem(el, "r"), *w = cJSON_GetObjectItem(el, "w");
@@ -126,10 +126,12 @@ void ci_on_msg(const char *payload, size_t len)
         snprintf(l->workflow, sizeof l->workflow, "%s", w->valuestring);
         fails += state == S_FAIL;
         runs += state == S_RUN;
+        passes += state == S_PASS;
     }
     s_ci->n = n;
     s_ci->fails = fails;
     s_ci->runs = runs;
+    s_ci->passes = passes;
     s_ci->have = true;
     cJSON_Delete(j);
     ESP_LOGI(TAG, "ci: %d lines, %d failing, %d running", n, fails, runs);

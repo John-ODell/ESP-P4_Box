@@ -13,8 +13,8 @@
  * index as user data (#104). */
 lv_obj_t *feed_create(lv_obj_t *parent, const pet_def_t *pet, lv_event_cb_t press_cb, lv_event_cb_t tap_cb);
 void feed_draw(void);                                    /* the ages move on: draw again when the tab is shown */
-const char *feed_summary(void);
-void feed_ago(char *buf, size_t size, int64_t t, time_t now);   /* "5m ago", "3h ago", "2d ago"; "" before SNTP */                          /* the header line under the tabs */
+const char *feed_summary(void);                          /* the header line under the tabs */
+void feed_ago(char *buf, size_t size, int64_t t, time_t now);   /* "5m ago", "3h ago", "2d ago"; "" before SNTP */
 void feed_on_msg(const char *payload, size_t len);       /* a pet/feed message, retained or fresh */
 int feed_key(int i);                                     /* row i's line, 0 if a tap cannot add it: is it still there? */
 bool feed_ref(int i, char *buf, size_t size);            /* "repo#74", as the to-do list shows the ref */

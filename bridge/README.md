@@ -299,11 +299,11 @@ not updated" and the next poll tries again.
 The box's CI tab (#107, `petbrain/ci.py`) shows the latest checks on your 12 most recently pushed repos (yours, not
 archived): one GraphQL call a poll for the check suites on the latest commit of each default branch. A suite that never
 started (queued with no run: an app installed on a repo where it has nothing to do, such as a Pages integration without
-a project) is left out. Each other suite is one line: `r` the repo, `w` the workflow, or the app for a suite without one
-("Cloudflare Workers and Pages"), `s` "fail", "run", "pass" or "other" (skipped, neutral, cancelled), `t` when it last
-changed. Failures first, then running, then the rest, newest first; at most 10 lines and 3000 bytes, retained on
-`pet/ci`, published when it changed. If GitHub cannot be reached the log says "CI not updated" and the box keeps the
-last list.
+a project) is left out. Each other suite is one line, the newest of each workflow on that commit: `r` the repo, `w` the
+workflow, or the app for a suite without one ("Cloudflare Workers and Pages"), `s` "fail", "run", "pass" or "other"
+(skipped, neutral, cancelled, waiting for approval), `t` when it last changed. Failures first, then running, then the
+rest, newest first; at most 10 lines and 3000 bytes, retained on `pet/ci`, published when it changed. If GitHub cannot
+be reached the log says "CI not updated" and the box keeps the last list.
 
 ## Known limits
 

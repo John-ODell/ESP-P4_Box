@@ -41,9 +41,12 @@ def fetch_counts(since: date, token: str | None = None, get=rest) -> dict:
     out = {}
     for key, (endpoint, query) in SEARCHES.items():
         q = urllib.parse.quote_plus(query.format(u=login, d=since.isoformat()))
-        n = get(token, f"search/{endpoint}?q={q}&per_page=1").get("total_count")
+        answer = get(token, f"search/{endpoint}?q={q}&per_page=1")
+        n = answer.get("total_count")
         if not isinstance(n, int) or isinstance(n, bool) or n < 0:
             raise RuntimeError(f"search/{endpoint} gave no count for {key}")
+        if answer.get("incomplete_results"):   # GitHub timed out part of the search: the count is too low
+            raise RuntimeError(f"search/{endpoint} for {key} came back incomplete")
         out[key] = n
     return out
 
@@ -61,7 +64,7 @@ class Radar:
         """Fetch and publish when EVERY seconds have passed since the last fetch and the counts changed. Raises on a
         GitHub or network failure, which the poll loop logs; the next poll tries again."""
         now = self._now()
-        if self._at is not None and (now - self._at).total_seconds() < EVERY:
+        if self._at is not None and 0 <= (now - self._at).total_seconds() < EVERY:   # a clock set back: due now
             return False
         since = (now - timedelta(days=DAYS)).date()
         counts = self._fetch(since)

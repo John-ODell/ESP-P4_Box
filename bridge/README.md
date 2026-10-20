@@ -289,7 +289,7 @@ The box's Radar tab (#105, `petbrain/radar.py`) shows the four counts GitHub's p
 365 days: commits authored (`c`), pull requests opened (`p`), pull requests reviewed (`r`) and issues opened (`i`). They
 come from the REST search API, as the github-bullseye skill's `bullseye.sh` counts them, because GraphQL hides
 private-repo activity even from the owner. Search allows 30 calls a minute and the counts move slowly, so the bridge
-makes its four calls at most once an hour, whatever `PET_POLL_MIN` is, and publishes retained on `pet/radar` only when
+makes its four searches (and one call for your login) at most once an hour, whatever `PET_POLL_MIN` is, and publishes retained on `pet/radar` only when
 they changed. A failed search fails the whole radar (a partial one would point at the wrong slice); the log says "radar
 not updated" and the next poll tries again.
 

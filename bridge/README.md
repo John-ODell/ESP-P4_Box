@@ -99,6 +99,7 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/feed/add` | box, when a tap puts an open PR or issue on the to-do list (#104) | no | `{r, n}` |
 | `pet/radar` | bridge, at most hourly when the counts changed (#105) | yes | `{v, since, c, p, r, i}` |
 | `pet/ci` | bridge, every poll when it changed (#107) | yes | `{v, items: [{r, w, s, t}]}` |
+| `pet/machines` | bridge, every minute (#108) | yes | `{v, at, up, poll, every, items: [{n, s, t}], err?}` |
 | `pet/merged` | bridge, on a poll that finds PRs newly merged (#106) | no | `{v, count, items: [{r, n, x}]}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
@@ -304,6 +305,21 @@ workflow, or the app for a suite without one ("Cloudflare Workers and Pages"), `
 (skipped, neutral, cancelled, waiting for approval), `t` when it last changed. Failures first, then running, then the
 rest, newest first; at most 10 lines and 3000 bytes, retained on `pet/ci`, published when it changed. If GitHub cannot
 be reached the log says "CI not updated" and the box keeps the last list.
+
+## Machines
+
+The box's Machines tab (#108, `petbrain/machines.py`) says whether the things the pet depends on are up. Once a minute,
+on its own thread, the bridge runs `tailscale status --json` and publishes retained on `pet/machines`: when it sent it
+(`at`, so the box can tell the bridge has gone quiet), when it started (`up`), its last good GitHub poll (`poll`) and
+the poll interval (`every`), and one item per machine: `n` its MagicDNS name, `s` "up", "down" or "unknown" (named but
+not on the tailnet), `t` when it was last seen. The machines are the ones named in `PET_MACHINES` (comma separated, any
+case, by MagicDNS name or the machine's own hostname; this Mac counts too), for example
+`PET_MACHINES=wordell,johnsdesktop`. Without it, every other machine that is not a phone or tablet and was seen in the
+last 14 days, and one listed once stays listed until the bridge restarts, so a machine down for weeks does not quietly
+drop off; name the machines you care about if some come and go. When Tailscale cannot be asked (not installed,
+stopped, logged out, no answer) the items are empty and `err` says why, and the box shows that instead of anything up or
+down. The bridge finds `tailscale` on PATH, then at `/usr/local/bin` (the app's own command line), Homebrew's, and the
+app itself, so it works when started without a login shell's PATH.
 
 ## Known limits
 

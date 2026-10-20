@@ -13,7 +13,8 @@ the local HTTP endpoint (notify_api.py) and go out on `pet/event` and the retain
 `pet/q20/ask` (q20.py). The to-do list is changed on the same endpoint (POST /todo), shown
 on the retained `pet/todo` and ticked from the box on `pet/todo/tick` (todo.py). The updater feed of
 recent PRs, issues and commits goes out retained on `pet/feed` every poll (feed.py), and a tap on an open one on
-the box (`pet/feed/add`) puts it on the to-do list.
+the box (`pet/feed/add`) puts it on the to-do list. The contribution radar's four counts go out retained on
+`pet/radar`, fetched at most once an hour (radar.py).
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ from . import q20, tailnet
 from .todo import TOPIC_TICK, Todo
 from .todo_refs import RefChecker, default_repo, resolve
 from .feed import TOPIC_ADD as TOPIC_FEED_ADD, Feed
+from .radar import Radar
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -178,8 +180,9 @@ def main() -> None:
     cfg = config()
     loop_mode = not (a.once or a.state_file)
     client = connect(cfg, topics=(TOPIC_ACK, TOPIC_TICK, TOPIC_FEED_ADD, q20.TOPIC_IN) if loop_mode else ())
-    refs = feed = None
+    refs = feed = radar = None
     if loop_mode:
+        radar = Radar(lambda topic, payload, retain: client.publish(topic, payload, qos=1, retain=retain))
         started = start_notifier(cfg, client)
         if started is not None:
             refs, feed = started[1], started[2]
@@ -211,6 +214,11 @@ def main() -> None:
                 feed.update()   # the updater feed on the box's list screen (#92)
             except Exception as exc:
                 log.warning("feed not updated: %s", exc)
+        if radar is not None:
+            try:
+                radar.update()   # the Radar tab (#105): four searches, at most once an hour
+            except Exception as exc:
+                log.warning("radar not updated: %s", exc)
         if a.once:
             break
         time.sleep(cfg["poll_min"] * 60)

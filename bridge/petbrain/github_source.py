@@ -90,6 +90,17 @@ def find_token() -> str:
     raise RuntimeError("no GitHub token: set GITHUB_TOKEN in bridge/.env or log in with `gh auth login`")
 
 
+def rest(token: str, path: str) -> dict:
+    """GET https://api.github.com/<path> (path with its query string, already encoded) as JSON. An HTTP error raises."""
+    req = urllib.request.Request(f"https://api.github.com/{path}", headers={
+        "Authorization": f"bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "esp-p4-pet-bridge",
+    })
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read())
+
+
 def graphql(token: str, query: str, variables: dict | None = None, partial: bool = False) -> dict:
     """The query's data. An error raises, unless `partial` and GitHub still sent data (a batch where one part was
     not found, say): then the data, with that part None."""

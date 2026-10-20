@@ -236,7 +236,8 @@ static lv_obj_t *make_row(void)
     lv_obj_set_style_radius(row, 18, 0);
     lv_obj_set_style_bg_color(row, C(panel), 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(row, C(accent), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(row, lv_color_mix(C(accent), C(panel), 96), LV_STATE_PRESSED);   /* the accent kind
+                                                                                                  label still shows */
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
     lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   /* feed_draw makes open ones buttons */
 

@@ -65,6 +65,12 @@ def resolve(ref: str, repo: tuple[str, str] | None) -> Key | None:
     return (repo[0], repo[1], int(number)) if repo else None
 
 
+def ref_key(ref: str, repo: tuple[str, str] | None) -> Key | None:
+    """resolve, for comparing two refs: GitHub's owner and repo names ignore case, so these do too."""
+    key = resolve(ref, repo)
+    return None if key is None else (key[0].lower(), key[1].lower(), key[2])
+
+
 def state_of(node: dict | None) -> str | None:
     if not isinstance(node, dict):
         return None

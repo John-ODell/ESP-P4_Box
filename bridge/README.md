@@ -98,6 +98,7 @@ The brain needs only the standard library (Python 3.11+); the publisher needs `p
 | `pet/feed` | bridge, every poll when it changed (#92) | yes | `{v, items: [{t, k, r, x, n?}]}` |
 | `pet/feed/add` | box, when a tap puts an open PR or issue on the to-do list (#104) | no | `{r, n}` |
 | `pet/radar` | bridge, at most hourly when the counts changed (#105) | yes | `{v, since, c, p, r, i}` |
+| `pet/ci` | bridge, every poll when it changed (#107) | yes | `{v, items: [{r, w, s, t}]}` |
 | `pet/merged` | bridge, on a poll that finds PRs newly merged (#106) | no | `{v, count, items: [{r, n, x}]}` |
 
 Retained means the box gets the latest state as soon as it subscribes. The box treats a retained message as a replay:
@@ -292,6 +293,17 @@ private-repo activity even from the owner. Search allows 30 calls a minute and t
 makes its four searches (and one call for your login) at most once an hour, whatever `PET_POLL_MIN` is, and publishes retained on `pet/radar` only when
 they changed. A failed search fails the whole radar (a partial one would point at the wrong slice); the log says "radar
 not updated" and the next poll tries again.
+
+## CI
+
+The box's CI tab (#107, `petbrain/ci.py`) shows the latest checks on your 12 most recently pushed repos (yours, not
+archived): one GraphQL call a poll for the check suites on the latest commit of each default branch. A suite that never
+started (queued with no run: an app installed on a repo where it has nothing to do, such as a Pages integration without
+a project) is left out. Each other suite is one line, the newest of each workflow on that commit: `r` the repo, `w` the
+workflow, or the app for a suite without one ("Cloudflare Workers and Pages"), `s` "fail", "run", "pass" or "other"
+(skipped, neutral, cancelled, waiting for approval), `t` when it last changed. Failures first, then running, then the
+rest, newest first; at most 10 lines and 3000 bytes, retained on `pet/ci`, published when it changed. If GitHub cannot
+be reached the log says "CI not updated" and the box keeps the last list.
 
 ## Known limits
 

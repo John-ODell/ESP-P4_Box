@@ -70,21 +70,18 @@ static int days_ago(time_t t, time_t now)
     return d < 0 ? 0 : (int)(d + 0.5);
 }
 
-/* "5m ago", "3h ago", "2d ago"; commits are counted by day, so "today", "yesterday". Empty before SNTP has synced. */
-static void age(char *buf, size_t size, const line_t *l, time_t now)
+/* "5m ago", "3h ago", "2d ago" for Unix time `t`. Empty before SNTP has synced. */
+void feed_ago(char *buf, size_t size, int64_t t, time_t now)
 {
     buf[0] = '\0';
-    if (now < SYNCED || l->t <= 0) {
+    if (now < SYNCED || t <= 0) {
         return;
     }
-    int64_t s = (int64_t)now - l->t;
+    int64_t s = (int64_t)now - t;
     if (s < 0) {
         s = 0;   /* the box's clock a little behind GitHub's */
     }
-    if (l->kind == K_COMMITS) {
-        int d = days_ago((time_t)l->t, now);
-        snprintf(buf, size, d == 0 ? "today" : d == 1 ? "yesterday" : "%dd ago", d);
-    } else if (s < 60) {
+    if (s < 60) {
         snprintf(buf, size, "just now");
     } else if (s < 3600) {
         snprintf(buf, size, "%lldm ago", (long long)(s / 60));
@@ -92,6 +89,16 @@ static void age(char *buf, size_t size, const line_t *l, time_t now)
         snprintf(buf, size, "%lldh ago", (long long)(s / 3600));
     } else {
         snprintf(buf, size, "%lldd ago", (long long)(s / 86400));
+    }
+}
+
+static void age(char *buf, size_t size, const line_t *l, time_t now)
+{
+    if (l->kind == K_COMMITS && now >= SYNCED && l->t > 0) {
+        int d = days_ago((time_t)l->t, now);
+        snprintf(buf, size, d == 0 ? "today" : d == 1 ? "yesterday" : "%dd ago", d);
+    } else {
+        feed_ago(buf, size, l->t, now);
     }
 }
 

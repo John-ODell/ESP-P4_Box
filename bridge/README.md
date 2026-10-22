@@ -295,6 +295,25 @@ makes its four searches (and one call for your login) at most once an hour, what
 they changed. A failed search fails the whole radar (a partial one would point at the wrong slice); the log says "radar
 not updated" and the next poll tries again.
 
+## The pet on the website
+
+With `PET_SITE_TOKEN` set in `.env`, each computed state's public part also goes to northbridgelandmark.com, whose home
+page shows the pet live (#114, `petbrain/site.py`; the site's side is John-ODell/website#113). Only `level`, `xp_into`,
+`xp_next`, `mood`, `mood_label`, `streak` and `goal_hit` are sent: never `ts` (its UTC offset gives away the time zone),
+`today`'s counts, `login`, events, or anything from the to-do list, feed, radar, CI or machines. A `--set` or
+`--state-file` run never sends, so a made-up state can't reach the site.
+
+To turn it on:
+
+1. Make a token: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`.
+2. In the Cloudflare dashboard, on the `northbridgelandmark` Worker, add it as the secret `DESKPET_PET_TOKEN`
+   (Settings, Variables and Secrets, type Secret).
+3. Put the same value in `bridge/.env` as `PET_SITE_TOKEN=` and restart the bridge.
+
+The bridge sends every poll; the site rewrites an unchanged state at most hourly, and shows the card only while it has
+heard from the bridge in the last 6 hours. A failed send logs "the website answered …" or "website not updated" and the
+next poll tries again. `PET_SITE_URL` points it elsewhere (https only, or http to localhost for `wrangler dev`).
+
 ## CI
 
 The box's CI tab (#107, `petbrain/ci.py`) shows the latest checks on your 12 most recently pushed repos (yours, not

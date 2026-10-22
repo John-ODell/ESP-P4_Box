@@ -15,7 +15,8 @@ on the retained `pet/todo` and ticked from the box on `pet/todo/tick` (todo.py).
 recent PRs, issues and commits goes out retained on `pet/feed` every poll (feed.py), and a tap on an open one on
 the box (`pet/feed/add`) puts it on the to-do list. The contribution radar's four counts go out retained on
 `pet/radar`, fetched at most once an hour (radar.py), and the latest checks per repo on `pet/ci` every poll (ci.py). Once a minute a thread publishes whether the
-machines in PET_MACHINES are up on Tailscale, and that this bridge is, on `pet/machines` (machines.py).
+machines in PET_MACHINES are up on Tailscale, and that this bridge is, on `pet/machines` (machines.py). With
+PET_SITE_TOKEN set, each computed state's public part also goes to northbridgelandmark.com's home page (site.py).
 """
 from __future__ import annotations
 
@@ -41,6 +42,7 @@ from .feed import TOPIC_ADD as TOPIC_FEED_ADD, Feed
 from .ci import CI
 from .machines import Machines
 from .radar import Radar
+from .site import Site
 from .notify_api import TOPIC_ACK, Notifier, make_server, serve_in_thread
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -184,6 +186,8 @@ def main() -> None:
     loop_mode = not (a.once or a.state_file)
     client = connect(cfg, topics=(TOPIC_ACK, TOPIC_TICK, TOPIC_FEED_ADD, q20.TOPIC_IN) if loop_mode else ())
     refs = feed = radar = ci = machines = None
+    # The website's pet card (#114): only computed states, never a --set or --state-file one made up for testing
+    site = Site.from_env() if not (a.set or a.state_file) else None
     if loop_mode:
         started = start_notifier(cfg, client)
         if started is not None:   # GitHub's extras too: a second bridge would publish the same retained topics
@@ -215,6 +219,12 @@ def main() -> None:
             log.error("cycle failed: %s", exc)
             if a.once:
                 sys.exit(1)
+            state = None
+        if site is not None and state is not None:
+            try:
+                site.send(state)
+            except Exception as exc:
+                log.warning("website not updated: %s", exc)
         if refs is not None:
             try:
                 refs.check()   # to-do items with a ref follow GitHub (#91)

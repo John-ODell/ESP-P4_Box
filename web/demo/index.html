@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Desk pet demo</title>
+  <link rel="icon" href="data:," />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="pet-demo.css" />
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; padding: 24px 16px 48px; background: #101114; color: #e8e8ea;
+           font-family: system-ui, sans-serif; }
+    header { max-width: 520px; margin: 0 auto 18px; }
+    h1 { font-size: 1.3rem; margin: 0 0 6px; }
+    p { margin: 0 0 10px; color: #a9abb3; line-height: 1.45; }
+    label { font-size: 0.9rem; color: #a9abb3; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Desk pet demo</h1>
+    <p>Stroke or tap the pet, swipe up or down for the stats, or use the buttons. The numbers are samples.</p>
+    <label>Pet <select id="pick"><option value="ember">Ember</option><option value="dolphin">Dolphin</option></select></label>
+  </header>
+  <div id="pet"></div>
+  <script type="module">
+    import { mountPetDemo } from "./pet-demo.js";
+    const root = document.getElementById("pet"), pick = document.getElementById("pick");
+    async function show(name) {   /* a newer pick replaces an older one still loading: the module keeps one per element */
+      await mountPetDemo(root, { pack: `../../pets/${name}/pet.json` }).catch((e) => {
+        root.textContent = e.message;
+      });
+    }
+    pick.addEventListener("change", () => show(pick.value));
+    show(pick.value);
+  </script>
+</body>
+</html>

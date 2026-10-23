@@ -29,10 +29,10 @@
   <script type="module">
     import { mountPetDemo } from "./pet-demo.js";
     const root = document.getElementById("pet"), pick = document.getElementById("pick");
-    let demo = null;
-    async function show(name) {
-      demo?.destroy();
-      demo = await mountPetDemo(root, { pack: `../../pets/${name}/pet.json` });
+    async function show(name) {   /* a newer pick replaces an older one still loading: the module keeps one per element */
+      await mountPetDemo(root, { pack: `../../pets/${name}/pet.json` }).catch((e) => {
+        root.textContent = e.message;
+      });
     }
     pick.addEventListener("change", () => show(pick.value));
     show(pick.value);

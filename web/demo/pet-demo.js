@@ -5,21 +5,23 @@
  * What follows the firmware (projects/pet/main): the 720x720 layout and fonts of face.c, the 48x40 art drawn 12x at
  * (72, 120), the sprite player of anim.c (idle animations drawn by weight per mood with a 0.8 to 3 s rest between,
  * reactions that preempt them, a one-shot reaction played twice, the sleep loop), the hearts, the falling snack, the
- * speech bubble tinted by the waiting tool, the stats overlay, and the banners. The gestures are the box's: stroke or
- * tap the pet, swipe up or down for the stats, tap the bubble for the next session, tap anywhere else to acknowledge.
- * Every action is also a button under the screen. */
+ * speech bubble tinted by the waiting tool, the stats overlay, and the banners. The gestures are the box's (main.c):
+ * stroke the pet for hearts, swipe up or down from off the pet for the stats, tap the bubble for the next session, tap
+ * to acknowledge. Every action is also a button under the screen. */
 
 const W = 48, H = 40, COLS = 8;                   /* pet_def.h, pets/README.md: frame k is row k / 8, column k % 8 */
 const SCALE = 12, X = 72, Y = 120;                /* pet_config.h: PET_SPRITE_SCALE, PET_SPRITE_X, PET_SPRITE_Y */
 const HEART_SCALE = 6, SNACK_SCALE = 4;
-const STROKE_PX = 150, TAP_PX = 20, SWIPE_PX = 80;
+const STROKE_PX = 150, TAP_PX = 20, JITTER_PX = 3;   /* pet_config.h PET_STROKE_* */
+const SWIPE_PX = 50;                              /* LVGL's default gesture limit */
 const BANNER_MS = 4000, STATS_MS = 12000, MAX_HEARTS = 4;
-const HAPPY_FEED = 8, HAPPY_MERGE = 5, HAPPY_PET = 3;
+const HAPPY_FEED = 8, HAPPY_MERGE = 5, HAPPY_PET = 3, PET_FADE = 4;
 const MOODS = ["sad", "neutral", "happy", "ecstatic", "worried"];
 const MOOD_SCORE = { sad: 2, neutral: 5, happy: 7, ecstatic: 10, worried: 4 };
 const SOURCE_COLOR = { claude: "#D97757", codex: "#10A37F", local: "#B794F4" };   /* pet_config.h PET_COLOR_* */
 const OTHER_COLOR = "#9AA5B1";
 const KIND_TEXT = { needs_input: "needs your input", done: "finished", error: "hit an error" };
+const mounts = new WeakMap();   /* element -> { token, destroy }: one live demo per element */
 const SESSIONS = [   /* what "A session waits" brings, in turn */
   { session: "desk-pet", source: "claude", kind: "needs_input", title: "Flash the new build to the box now?" },
   { session: "website", source: "codex", kind: "done", title: "Added the live pet to the desk pet page" },
@@ -33,8 +35,11 @@ export async function loadPack(url) {
   if (!res.ok) throw new Error(`pet pack: ${res.status} for ${base}`);
   const def = await res.json();
   const img = new Image();
+  img.crossOrigin = "anonymous";   /* a pack on another origin needs CORS, or the canvas can't be read */
   img.src = new URL(def.sheet || "frames.png", base).href;
-  await img.decode();
+  await img.decode().catch(() => {
+    throw new Error(`pet pack: could not load ${img.src}`);
+  });
   const c = document.createElement("canvas");
   c.width = img.naturalWidth;
   c.height = img.naturalHeight;
@@ -113,7 +118,7 @@ class Player {
 
   after(ms) {
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.tick(), ms);
+    if (!this.stopped) this.timer = setTimeout(() => this.tick(), ms);
   }
 
   rest() {
@@ -138,7 +143,7 @@ class Player {
     this.reaction = reaction;
     const f = this.pack.anims[name][0];
     this.draw(f.img, f.dx, f.dy);
-    this.after(f.ms);
+    if (!(this.still && name === "sleep")) this.after(f.ms);   /* reduced motion: asleep is one still frame */
   }
 
   tick() {
@@ -199,14 +204,24 @@ class Player {
   }
 
   stop() {
+    this.stopped = true;
     clearTimeout(this.timer);
   }
 }
 
-/* Mount the demo in root. options.pack: the pet.json URL. Returns { destroy }. */
+/* Mount the demo in root, replacing any demo already there. options.pack: the pet.json URL. Returns { destroy }. When
+ * a later call on the same element starts before this one's pack loads, this one gives up and returns a no-op. */
 export async function mountPetDemo(root, options = {}) {
-  const pack = await loadPack(options.pack || "pet.json");
+  mounts.get(root)?.destroy?.();
+  const token = {};
+  mounts.set(root, { token });
+  const pack = await loadPack(options.pack || "pet.json").catch((e) => {
+    if (mounts.get(root)?.token === token) mounts.delete(root);
+    throw e;
+  });
+  if (mounts.get(root)?.token !== token) return { destroy() {} };
   const c = pack.colors;
+  let destroyed = false;
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const timers = new Set();
   const later = (fn, ms) => {
@@ -226,7 +241,7 @@ export async function mountPetDemo(root, options = {}) {
     level: 4, xpInto: 201, xpNext: 800, xp: 2601, streak: 19, today: 12, goal: 20,
     commits: 7, prs: 2, issues: 2, reviews: 1, other: 0, todayXp: 64,
     mood: "happy", happiness: 72, snacks: 3, eaten: 0, sleeping: false, merged: 116,
-    queue: [], pos: 0, next: 0,
+    queue: [], pos: 0, next: 0, strokes: 0, hearts: 0,
   };
 
   root.classList.add("pet-demo");
@@ -308,6 +323,7 @@ export async function mountPetDemo(root, options = {}) {
       box.y2 = Math.max(box.y2, y);
     }
   }
+  if (box.x2 < 0) Object.assign(box, { x1: 0, y1: 0, x2: W - 1, y2: H - 1 });   /* blank resting frames: the sprite */
   const onPet = (p) => !bubbleHit(p) && stats.hidden && p.x >= X + box.x1 * SCALE && p.x < X + (box.x2 + 1) * SCALE &&
     p.y >= Y + box.y1 * SCALE && p.y < Y + (box.y2 + 1) * SCALE;
   const bubbleHit = (p) => {
@@ -386,7 +402,7 @@ export async function mountPetDemo(root, options = {}) {
     what.textContent = `${n.source} ${KIND_TEXT[n.kind] || n.kind}`;
     what.style.color = n.kind === "error" ? c.warn : c.ink;
     title.textContent = n.title;
-    count.textContent = `${state.pos + 1} of ${state.queue.length} waiting. Tap here for the next`;
+    count.textContent = `${state.pos + 1} of ${state.queue.length} waiting. Tap here for the next`;   /* 1 = newest */
     count.hidden = state.queue.length < 2;
     bubble.style.borderColor = color;
     bubble.hidden = false;
@@ -395,32 +411,31 @@ export async function mountPetDemo(root, options = {}) {
 
   function sessionWaits() {
     const n = SESSIONS[state.next++ % SESSIONS.length];
-    state.queue = state.queue.filter((q) => q.session !== n.session);
-    state.queue.push(n);
-    state.pos = state.queue.length - 1;
+    state.queue = [n, ...state.queue.filter((q) => q.session !== n.session)];   /* the bridge lists newest first */
+    state.pos = 0;
     hideStats();
     showNotice();
     player.play("notice");
     say(`${n.session}: ${n.source} ${KIND_TEXT[n.kind]}`);
   }
 
-  function ack() {   /* face_ack: the banner, the stats, then the session shown */
-    if (!banner.hidden) {
-      cancel(bannerTimer);
-      banner.hidden = true;
-      return;
+  const pending = () => state.queue.length > 0 || !banner.hidden || !stats.hidden;
+  function ack() {   /* a tap (main.c): notice_tap acknowledges the session shown, face_ack hides banner and stats */
+    if (state.queue.length) {
+      const n = state.queue.splice(state.pos, 1)[0];
+      if (state.pos >= state.queue.length) state.pos = 0;   /* else pos now names the next older one */
+      showNotice();
+      say(`${n.session} acknowledged`);
     }
-    if (!state.queue.length) return;
-    const n = state.queue.splice(state.pos, 1)[0];
-    state.pos = Math.min(state.pos, Math.max(0, state.queue.length - 1));
-    showNotice();
-    say(`${n.session} acknowledged`);
+    cancel(bannerTimer);
+    banner.hidden = true;
+    hideStats();
   }
 
   function petAt(x, y) {
     if (hearts.childElementCount < MAX_HEARTS) {
       const h = art(hearts, "pet-demo__heart", HEART_SCALE);
-      const f = pack.heart[hearts.childElementCount % pack.heart.length];
+      const f = pack.heart[state.hearts++ % pack.heart.length];
       paint(h, pack.frames[f.img], c.accent);
       h.style.left = `${x - (W * HEART_SCALE) / 2}px`;
       h.style.top = `${y - (H * HEART_SCALE) / 2}px`;
@@ -429,21 +444,26 @@ export async function mountPetDemo(root, options = {}) {
       rise.onfinish = () => h.remove();
     }
     player.pet();
-    state.happiness = Math.min(100, state.happiness + HAPPY_PET);
+    const gain = Math.max(0, HAPPY_PET - Math.floor(state.strokes / PET_FADE));   /* play.c play_pet */
+    if (state.strokes < HAPPY_PET * PET_FADE) state.strokes++;
+    state.happiness = Math.min(100, state.happiness + gain);
     fill();
   }
 
   let falling = null;
-  function feed() {
-    if (falling) return;
-    if (state.sleeping) {
-      showBanner("Shh, it's asleep", c.dim);
+  function feed() {   /* face_feed: one fish at a time; the snack counts as it starts to fall */
+    if (falling) {
+      showBanner("Still eating...", c.ink);
       return;
     }
     if (state.snacks <= 0) {
       showBanner("No snacks left today", c.warn);
       return;
     }
+    state.snacks--;
+    state.eaten++;
+    state.happiness = Math.min(100, state.happiness + HAPPY_FEED);
+    fill();
     hideStats();
     const w = W * SNACK_SCALE, h = H * SNACK_SCALE;
     snack.style.left = `${X + (W * SCALE) / 2 - w / 2}px`;
@@ -457,14 +477,12 @@ export async function mountPetDemo(root, options = {}) {
     let flapTimer = 0;
     flap();
     falling = snack.animate([{ transform: `translateY(${-h}px)` },
-      { transform: `translateY(${Y + (H * SCALE) / 3 - h / 2}px)` }], { duration: 900, easing: "ease-in" });
+      { transform: `translateY(${Y + (H * SCALE) / 3 - h / 2}px)` }], { duration: still ? 0 : 900, easing: "ease-in" });
     falling.onfinish = () => {
       cancel(flapTimer);
       snack.hidden = true;
       falling = null;
-      state.snacks--;
-      state.eaten++;
-      state.happiness = Math.min(100, state.happiness + HAPPY_FEED);
+      if (destroyed) return;
       player.play("celebrate");
       showBanner(`Yum!  ${state.snacks} snack${state.snacks === 1 ? "" : "s"} left`, c.good);
       fill();
@@ -505,8 +523,11 @@ export async function mountPetDemo(root, options = {}) {
     fill();
   }
 
-  /* Touch: stroke the pet for hearts, tap it for one, swipe up or down for the stats, tap the bubble for the next
-   * session, tap anywhere else to acknowledge. */
+  /* Touch, as main.c: a press that starts on the pet strokes it (a heart for every STROKE_PX of travel over the pet,
+   * counted as |dx| + |dy| in steps of at least JITTER_PX) and is never a swipe. A press that starts off the pet and
+   * travels SWIPE_PX up or down toggles the stats. A tap (under TAP_PX of travel) on the bubble shows the next session
+   * when several wait; any other tap acknowledges. One difference: a tap on the pet with nothing to acknowledge gives a
+   * heart here, so a visitor's first tap does something. */
   const point = (e) => {
     const r = stage.getBoundingClientRect(), k = r.width / 720;
     return { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k };
@@ -515,16 +536,19 @@ export async function mountPetDemo(root, options = {}) {
   const down = (e) => {
     if (e.button > 0) return;
     const p = point(e);
-    press = { start: p, last: p, travel: 0, onPet: onPet(p), stroked: 0 };
+    press = { start: p, last: p, travel: 0, stroke: 0, onPet: onPet(p), petted: false };
     screen.setPointerCapture(e.pointerId);
   };
   const move = (e) => {
-    if (!press) return;
-    const p = point(e);
-    press.travel += Math.hypot(p.x - press.last.x, p.y - press.last.y);
+    if (!press || !press.onPet) return;
+    const p = point(e), step = Math.abs(p.x - press.last.x) + Math.abs(p.y - press.last.y);
+    if (step < JITTER_PX) return;
+    if (onPet(p)) press.stroke += step;
+    press.travel += step;
     press.last = p;
-    if (press.onPet && press.travel - press.stroked * STROKE_PX >= STROKE_PX) {
-      press.stroked++;
+    if (press.stroke >= STROKE_PX) {
+      press.stroke = 0;
+      press.petted = true;
       petAt(p.x, p.y);
     }
   };
@@ -532,14 +556,20 @@ export async function mountPetDemo(root, options = {}) {
     if (!press) return;
     const p = point(e), dx = p.x - press.start.x, dy = p.y - press.start.y, was = press;
     press = null;
-    if (was.stroked) return;
-    if (was.travel <= TAP_PX) {
-      if (!stats.hidden) hideStats();
-      else if (bubbleHit(p) && state.queue.length > 1) {
+    if (was.onPet) {
+      if (was.petted || was.travel >= TAP_PX) return;   /* petting acknowledges nothing */
+      if (pending()) ack();
+      else petAt(p.x, p.y);
+      return;
+    }
+    const far = Math.abs(dx) + Math.abs(dy);
+    if (far < TAP_PX) {
+      if (state.queue.length > 1 && bubbleHit(p)) {
         state.pos = (state.pos + 1) % state.queue.length;
         showNotice();
-      } else if (was.onPet) petAt(p.x, p.y);
-      else ack();
+      } else {
+        ack();
+      }
     } else if (Math.abs(dy) >= SWIPE_PX && Math.abs(dy) > Math.abs(dx)) {
       toggleStats();
     } else if (Math.abs(dx) >= SWIPE_PX) {
@@ -566,14 +596,22 @@ export async function mountPetDemo(root, options = {}) {
   const clockTimer = setInterval(tick, 10000);
   player.rest();
 
-  return {
+  const handle = {
     destroy() {
+      if (destroyed) return;
+      destroyed = true;
       player.stop();
+      falling?.cancel();
+      for (const a of root.getAnimations({ subtree: true })) a.cancel();
       clearInterval(clockTimer);
       for (const t of timers) clearTimeout(t);
       resize.disconnect();
       root.replaceChildren();
       root.classList.remove("pet-demo");
+      for (const k of Object.keys(c)) root.style.removeProperty(`--pd-${k.replace("_", "-")}`);
+      if (mounts.get(root)?.token === token) mounts.delete(root);
     },
   };
+  mounts.set(root, { token, destroy: handle.destroy });
+  return handle;
 }

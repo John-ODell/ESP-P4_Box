@@ -67,7 +67,7 @@
 }
 
 .pet-demo__level { left: 24px; top: 16px; font-size: 48px; font-weight: 500; color: var(--pd-accent); }
-.pet-demo__bar { left: 26px; top: 78px; width: 220px; height: 14px; border-radius: 7px; background: var(--pd-panel); overflow: hidden; }
+.pet-demo__bar { left: 26px; top: 78px; width: 220px; height: 14px; border-radius: 7px; background: var(--pd-dim); overflow: hidden; }
 .pet-demo__bar-fill { height: 100%; border-radius: 7px; background: var(--pd-accent); }
 .pet-demo__xp { left: 26px; top: 98px; font-size: 16px; color: var(--pd-dim); }
 .pet-demo__clock { right: 24px; top: 16px; font-size: 32px; }
@@ -124,7 +124,8 @@
   width: 620px;
   height: 560px;
   box-sizing: border-box;
-  padding: 30px;
+  padding: 28px;
+  border: 2px solid var(--pd-accent);
   border-radius: 28px;
   background: var(--pd-panel);
   font-size: 24px;
@@ -132,8 +133,8 @@
 
 .pet-demo__stats-head { color: var(--pd-accent); }
 .pet-demo__stats-body { margin: 8px 0 18px; white-space: pre-wrap; line-height: 1.35; }
-.pet-demo__bar--stats { left: 30px; top: auto; bottom: 66px; width: 560px; position: absolute; }
-.pet-demo__stats-foot { position: absolute; right: 30px; bottom: 24px; font-size: 16px; color: var(--pd-dim); }
+.pet-demo__bar--stats { left: 28px; top: auto; bottom: 64px; width: 560px; position: absolute; }
+.pet-demo__stats-foot { position: absolute; right: 28px; bottom: 22px; font-size: 16px; color: var(--pd-dim); }
 
 .pet-demo [hidden] {
   display: none !important;
@@ -152,20 +153,25 @@
   font-size: 0.9rem;
   padding: 0.45em 0.9em;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--pd-accent) 55%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);   /* the page's text colour: readable on any page */
   background: transparent;
   color: inherit;
   cursor: pointer;
 }
 
+.pet-demo__select option {
+  color: #111;   /* the open list is drawn by the system, often light, whatever the page */
+  background: #fff;
+}
+
 .pet-demo__button:hover,
 .pet-demo__select:hover {
-  background: color-mix(in srgb, var(--pd-accent) 14%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
 .pet-demo__button:focus-visible,
 .pet-demo__select:focus-visible {
-  outline: 2px solid var(--pd-accent);
+  outline: 2px solid currentColor;
   outline-offset: 2px;
 }
 

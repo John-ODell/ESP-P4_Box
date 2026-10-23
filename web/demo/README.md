@@ -24,12 +24,12 @@ Then open http://localhost:8000/web/demo/. The page has a picker for the Ember a
 
 | On the screen, as on the box | Button |
 |---|---|
-| Stroke the pet: a heart for every 150 px of travel, and a wiggle. A tap on the pet gives one heart | Pet |
-| Swipe up or down: the stats overlay (closes after 12 s, or on a tap) | Stats |
-| Tap the bubble when several sessions wait: the next one | |
-| Tap anywhere else: acknowledge the banner, else the session shown | |
-| | Feed: a fish drops, the pet celebrates, "Yum!  2 snacks left" (three snacks) |
-| | A session waits: Claude, Codex and a local tool in turn. The bubble shows it, the pet's ink takes the tool's colour, and it plays its notice animation |
+| Stroke the pet: a heart for every 150 px of travel over it (\|dx\| + \|dy\|, steps under 3 px ignored), and a wiggle. Happiness from petting fades the longer you pet. A press that starts on the pet is never a swipe | Pet |
+| Swipe up or down, starting off the pet: the stats overlay (closes after 12 s, or on a tap) | Stats |
+| Tap the bubble when several sessions wait: the next older one | |
+| Tap: acknowledge the session shown, and hide the banner and the stats | |
+| | Feed: a fish drops, the pet celebrates, "Yum!  2 snacks left" (three snacks). A second feed while one falls says "Still eating..." |
+| | A session waits: Claude, Codex and a local tool in turn, newest first ("1 of 3"). The bubble shows it, the pet's ink takes the tool's colour, and it plays its notice animation |
 | | Merge a PR: the celebration and "Merged #117!" |
 | | Night / Day: the sleep loop in the pack's sleep ink, with the screen dimmed |
 | | The mood picker: the five moods and their idle animations. Worried puts "!" on the streak |
@@ -38,9 +38,13 @@ A sideways swipe opens the list on the box. Here it says so on the status line.
 
 Things that differ from the box:
 
-- A tap on the pet pets it. On the box it opens the play menu.
+- A tap on the pet with nothing to acknowledge gives a heart, so a visitor's first tap does something. On the box it
+  acknowledges, like any tap. The box's play menu (a long press away from the pet: feed, Pet Says, 20 Questions) is
+  not here; Feed is a button.
 - The clock is the visitor's, 24-hour like the box.
-- Under `prefers-reduced-motion`, the pet rests between the things a visitor does and the hearts don't rise.
+- Under `prefers-reduced-motion`, the pet doesn't play idle animations and rests between the things a visitor does.
+  Asleep is one still frame, the fish lands at once, and the hearts fade without rising. Reactions to a button
+  (petting, a session, a merge, a snack) still play.
 - The screen takes touches for strokes and swipes (`touch-action: none`), so on a phone the page scrolls from outside
   the screen.
 
@@ -59,13 +63,19 @@ pets/ember/     pet.json and frames.png, unchanged from this repo
 <div id="pet-demo"></div>
 <script type="module">
   import { mountPetDemo } from "/js/pet-demo.js";
-  mountPetDemo(document.getElementById("pet-demo"), { pack: "/assets/desk-pet/ember/pet.json" });
+  mountPetDemo(document.getElementById("pet-demo"), { pack: "/assets/desk-pet/ember/pet.json" })
+    .catch((e) => console.warn(e.message));   /* the element stays empty: show a still in its place */
 </script>
 ```
 
 - `pack` is the URL of a `pet.json`. Its `sheet` (`frames.png`) is loaded relative to it.
-- `mountPetDemo` returns a promise of `{ destroy }`, which stops every timer and empties the element.
+- `mountPetDemo` returns a promise of `{ destroy }`, which stops every timer and animation and empties the element.
+  Mounting again on the same element replaces the demo there; a mount overtaken by a later one before its pack loads
+  resolves to a no-op.
+- The pack must be on the same origin, or served with CORS (`Access-Control-Allow-Origin`): the demo reads the sheet's
+  pixels. A failed load rejects with the URL that failed.
 - The demo is at most 520 px wide and fills narrower containers.
 - The box uses Montserrat (400 and 500). The demo asks for it first, then falls back to Inter and the system font. To
   match the box, load Montserrat; to match the page around it, set `--pet-demo-font`.
-- The colours come from the pack. The buttons take the page's text colour and the pack's accent.
+- The screen's colours come from the pack. The buttons take the page's text colour for text, border and focus ring,
+  so they read on light and dark pages alike.

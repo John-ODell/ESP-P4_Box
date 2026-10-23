@@ -56,6 +56,7 @@ bridge/              Mac-side brain, GitHub reader, MQTT publisher, session-even
 pets/                the pet's look: one folder per pet (frames.png + pet.json), see pets/README.md
 tools/serial_tail.py passive serial reader that never resets the board
 tools/petpack.py     check, preview and pack a pet folder
+web/demo/            the pet in a web page, to try before flashing, see web/demo/README.md
 notes/               flashing notes, C6 findings, original project brief
 vendor/waveshare-4b/ Waveshare's official repo as a submodule (examples, BSP, schematics)
 ```

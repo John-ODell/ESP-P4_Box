@@ -1,0 +1,179 @@
+/* The desk pet demo (#116). Positions and sizes are the box's, in 720x720 stage pixels (projects/pet/main/face.c),
+ * scaled to the width the demo is given. Colours come from the pet pack as --pd-* properties. Set --pet-demo-font to
+ * change the typeface; the box uses Montserrat. */
+
+.pet-demo {
+  position: relative;
+  --pd-scale: 0.5;
+  --pet-demo-font: "Montserrat", "Inter", system-ui, sans-serif;
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  width: 100%;
+  max-width: 520px;
+  margin-inline: auto;
+}
+
+.pet-demo__screen {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 10px solid #0d0d0f;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+  background: var(--pd-background);
+  touch-action: none;   /* strokes and swipes belong to the pet; the page scrolls from outside the screen */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+  transition: filter 1.5s ease;
+}
+
+.pet-demo__screen.is-night {
+  filter: brightness(0.6);   /* the box dims its backlight at night */
+}
+
+.pet-demo__stage {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 720px;
+  height: 720px;
+  transform: scale(var(--pd-scale));
+  transform-origin: 0 0;
+  font-family: var(--pet-demo-font);
+  color: var(--pd-ink);
+  line-height: 1.2;
+}
+
+.pet-demo__stage > * {
+  position: absolute;
+}
+
+.pet-demo__sprite,
+.pet-demo__snack,
+.pet-demo__heart {
+  position: absolute;
+  left: 0;
+  top: 0;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.pet-demo__hearts {
+  inset: 0;
+  pointer-events: none;
+}
+
+.pet-demo__level { left: 24px; top: 16px; font-size: 48px; font-weight: 500; color: var(--pd-accent); }
+.pet-demo__bar { left: 26px; top: 78px; width: 220px; height: 14px; border-radius: 7px; background: var(--pd-panel); overflow: hidden; }
+.pet-demo__bar-fill { height: 100%; border-radius: 7px; background: var(--pd-accent); }
+.pet-demo__xp { left: 26px; top: 98px; font-size: 16px; color: var(--pd-dim); }
+.pet-demo__clock { right: 24px; top: 16px; font-size: 32px; }
+.pet-demo__streak { right: 24px; top: 60px; font-size: 24px; white-space: pre; }
+.pet-demo__today { left: 50%; bottom: 56px; transform: translateX(-50%); font-size: 32px; white-space: pre; }
+.pet-demo__mood { left: 24px; bottom: 20px; font-size: 24px; color: var(--pd-dim); white-space: pre; }
+.pet-demo__link { right: 24px; bottom: 24px; font-size: 16px; color: var(--pd-dim); }
+.pet-demo__status { left: 50%; bottom: 24px; transform: translateX(-50%); font-size: 16px; color: var(--pd-dim); white-space: nowrap; }
+.pet-demo__banner { left: 50%; bottom: 104px; transform: translateX(-50%); font-size: 32px; white-space: pre; }
+
+.pet-demo__bubble {
+  right: 20px;
+  top: 104px;
+  width: 400px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px;
+  border: 3px solid var(--pd-accent);
+  border-radius: 24px;
+  background: var(--pd-panel);
+}
+
+.pet-demo__who,
+.pet-demo__what,
+.pet-demo__count {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pet-demo__who,
+.pet-demo__what { font-size: 24px; }
+
+.pet-demo__title {
+  font-size: 16px;
+  color: var(--pd-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pet-demo__count {
+  margin-top: 8px;
+  font-size: 16px;
+  color: var(--pd-dim);
+}
+
+.pet-demo__stats {
+  left: 50px;
+  top: 80px;
+  width: 620px;
+  height: 560px;
+  box-sizing: border-box;
+  padding: 30px;
+  border-radius: 28px;
+  background: var(--pd-panel);
+  font-size: 24px;
+}
+
+.pet-demo__stats-head { color: var(--pd-accent); }
+.pet-demo__stats-body { margin: 8px 0 18px; white-space: pre-wrap; line-height: 1.35; }
+.pet-demo__bar--stats { left: 30px; top: auto; bottom: 66px; width: 560px; position: absolute; }
+.pet-demo__stats-foot { position: absolute; right: 30px; bottom: 24px; font-size: 16px; color: var(--pd-dim); }
+
+.pet-demo [hidden] {
+  display: none !important;
+}
+
+.pet-demo__controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.pet-demo__button,
+.pet-demo__select {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.45em 0.9em;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--pd-accent) 55%, transparent);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pet-demo__button:hover,
+.pet-demo__select:hover {
+  background: color-mix(in srgb, var(--pd-accent) 14%, transparent);
+}
+
+.pet-demo__button:focus-visible,
+.pet-demo__select:focus-visible {
+  outline: 2px solid var(--pd-accent);
+  outline-offset: 2px;
+}
+
+.pet-demo__live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
